@@ -13,4 +13,4 @@ setup(
     author_email="sakibahmed2018go@gmail.com",
     description="AI Game Engine with diffusion model utilities, noise latent functions, and patch embedding",
     url="https://github.com/Sakib323/AI-Game-Engine",
-)
+) 
