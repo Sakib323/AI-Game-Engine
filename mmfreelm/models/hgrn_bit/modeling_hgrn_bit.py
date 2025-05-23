@@ -23,23 +23,25 @@ from mmfreelm.modules.activations import swiglu_linear, swiglu
 #from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 from mmfreelm.models.hgrn_bit.hgrn_bit_moe import HGRNBitMoE
+
+from mmfreelm.models.hgrn_bit.adaln_conditioning import AdaLNConditioning
+
 logger = logging.get_logger(__name__)
 
 
-class HGRNBitMLP(nn.Module):
 
+
+class HGRNBitMLP(nn.Module):
     def __init__(
         self,
         hidden_size: int,
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
         hidden_act: str = 'swish'
-    ) -> HGRNBitMLP:
+    ) -> None:  # Changed return type annotation to None for clarity
         super().__init__()
 
         self.hidden_size = hidden_size
-        # the final number of params is `hidden_ratio * hidden_size^2`
-        # `intermediate_size` is chosen to be a multiple of 256 closest to `2/3 * hidden_size * hidden_ratio`
         if hidden_ratio is None:
             hidden_ratio = 4
         if intermediate_size is None:
@@ -52,13 +54,21 @@ class HGRNBitMLP(nn.Module):
         self.down_proj = BitLinear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
-    def forward(self, x):
+        # --- Added: adaLN conditioning module ---
+        self.ada_ln = AdaLNConditioning(input_dim=hidden_size, hidden_size=self.intermediate_size, eps=1e-6)
+
+    def forward(self, x, image_condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         y = self.gate_proj(x)
         gate, y = y.chunk(2, -1)
+
+        # --- Added: Apply adaLN conditioning ---
+        if image_condition is not None:
+            scale, shift = self.ada_ln(image_condition)
+            gate = gate * (1 + scale) + shift
+            y = y * (1 + scale) + shift
+
         z = self.down_proj(swiglu(gate, y))
         return z
-
-
 class HGRNBitBlock(nn.Module):
     def __init__(self, config: HGRNBitConfig, layer_idx: int):
         super().__init__()
@@ -167,13 +177,16 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
 
 
 class HGRNBitModel(HGRNBitPreTrainedModel):
-
     def __init__(self, config: HGRNBitConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+
+        # --- Added: Image embedding layer for noisy image latents ---
+        self.image_embed = nn.Linear(4, config.hidden_size)  # Assuming 4 channels from VAE latent (32x32x4)
+
         if config.use_lower_bound:
             self.lower_bounds = nn.Parameter(torch.zeros(config.num_hidden_layers, config.hidden_size))
         self.layers = nn.ModuleList([HGRNBitBlock(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
@@ -192,8 +205,10 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,  # noqa
+        attention_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        # --- Added: Image latents for multimodal input ---
+        image_latents: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[List[torch.Tensor]]] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -208,7 +223,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # retrieve input_ids and inputs_embeds
+        # Retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -221,6 +236,24 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embeddings(input_ids)
         hidden_states = inputs_embeds
+
+        # --- Retained: Combine with Text Embeddings ---
+        # Combine text embeddings with image embeddings
+        if image_latents is not None:
+            # Assuming image_latents shape is [batch_size, 32, 32, 4]
+            # Flatten spatial dimensions and embed
+            image_latents_flat = image_latents.view(image_latents.shape[0], -1, image_latents.shape[-1])
+            image_embeds = self.image_embed(image_latents_flat)  # Shape: [batch_size, 32*32, hidden_size]
+            # Combine with text embeddings (assuming text embeddings are [batch_size, seq_len, hidden_size])
+            # We can either concatenate along the sequence dimension or add them
+            # Here, we'll add them after ensuring compatible shapes
+            if image_embeds.shape[1] != hidden_states.shape[1]:
+                # Repeat or interpolate image embeddings to match sequence length
+                image_embeds = image_embeds[:, :hidden_states.shape[1], :] if image_embeds.shape[1] > hidden_states.shape[1] else image_embeds.repeat(1, hidden_states.shape[1] // image_embeds.shape[1] + 1, 1)[:, :hidden_states.shape[1], :]
+            hidden_states = hidden_states + image_embeds  # Element-wise addition
+
+        # Use image_latents as image_condition for adaLN
+        image_condition = image_latents_flat if image_latents is not None else None
 
         if use_cache:
             if past_key_values is None:
@@ -241,6 +274,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         if self.config.use_lower_bound:
             lower_bounds = self.lower_bounds.softmax(0)
             lower_bounds = lower_bounds.cumsum(0) - lower_bounds[0]
+
         for i, layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -254,7 +288,9 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
                     past_key_values,
                     use_cache,
                     output_attentions,
-                    lower_bound
+                    lower_bound,
+                    # --- Added: Pass image_condition to layer ---
+                    image_condition
                 )
             else:
                 hidden_states, attentions, past_key_values = layer(
@@ -263,7 +299,9 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
                     past_key_values=past_key_values,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
-                    lower_bound=lower_bound
+                    lower_bound=lower_bound,
+                    # --- Added: Pass image_condition to layer ---
+                    image_condition=image_condition
                 )
 
             if output_attentions:
@@ -271,7 +309,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
 
         hidden_states = self.norm(hidden_states)
 
-        # add hidden states from the last decoder layer
+        # Add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -286,7 +324,6 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
             hidden_states=all_hidden_states,
             attentions=all_attns
         )
-
 
 class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]

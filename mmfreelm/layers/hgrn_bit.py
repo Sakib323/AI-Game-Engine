@@ -17,6 +17,7 @@ from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
 from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
 #from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from mmfreelm.models.hgrn_bit.adaln_conditioning import AdaLNConditioning
 
 class HGRNBitAttention(nn.Module):
     def __init__(
@@ -34,7 +35,7 @@ class HGRNBitAttention(nn.Module):
         rotary_embeddings: bool = False, 
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
-    ) -> HGRNAttention:
+    ) -> None:  # Changed return type annotation to None for clarity
         super().__init__()
         if rotary_embeddings:
             print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
@@ -53,7 +54,7 @@ class HGRNBitAttention(nn.Module):
 
         self.layer_idx = layer_idx
 
-        assert mode in ['fused_recurrent'], f"Not suppoerted mode `{mode}`."
+        assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
         assert self.hidden_size % num_heads == 0, f"hidden size must be divisible by num_heads of {num_heads}"
 
         self.i_proj = BitLinear(hidden_size, self.input_dim, bias=False)
@@ -81,6 +82,9 @@ class HGRNBitAttention(nn.Module):
                 use_ternary=use_ternary_rope
             )
 
+        # --- Added: adaLN conditioning module ---
+        self.ada_ln = AdaLNConditioning(input_dim=hidden_size, hidden_size=self.input_dim, eps=layernorm_eps)
+
         self.apply(self._initialize_weights)
 
     def _initialize_weights(self, module):
@@ -100,7 +104,8 @@ class HGRNBitAttention(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         lower_bound: Optional[torch.Tensor] = None,
-        **kwargs
+        # --- Added: image_condition for adaLN ---
+        image_condition: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Cache]]:
         # launching the triton kernel for just one token will actually be slower
         mode = 'fused_recurrent' if hidden_states.shape[1] == 1 else self.mode
@@ -139,6 +144,12 @@ class HGRNBitAttention(nn.Module):
             seq_len = i.shape[2]
             cos, sin = self.rotary_emb(i, seq_len=seq_len)
             i, f = apply_rotary_pos_emb(i, f, cos, sin)
+
+        # --- Added: Apply adaLN conditioning before recurrent computation ---
+        if image_condition is not None:
+            scale, shift = self.ada_ln(image_condition)
+            i = i * (1 + scale.unsqueeze(1).unsqueeze(2)) + shift.unsqueeze(1).unsqueeze(2)
+            f = f * (1 + scale.unsqueeze(1).unsqueeze(2)) + shift.unsqueeze(1).unsqueeze(2)
 
         recurrent_state = last_state[-1] if use_cache else None
         if mode == 'fused_recurrent':
