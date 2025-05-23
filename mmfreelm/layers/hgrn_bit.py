@@ -17,7 +17,7 @@ from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
 from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
 #from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
-from mmfreelm.models.hgrn_bit.adaln_conditioning import AdaLNConditioning
+from mmfreelm.models.hgrn_bit.modeling_hgrn_bit import AdaLNConditioning
 
 class HGRNBitAttention(nn.Module):
     def __init__(
