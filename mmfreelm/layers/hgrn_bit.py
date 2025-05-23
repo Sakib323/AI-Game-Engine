@@ -11,8 +11,8 @@ from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 from mmfreelm.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
 from mmfreelm.modules.activations import swiglu, ACT2FN
 from mmfreelm.models.utils import RecurrentCache
-from mmfreelm.ops.fusedhgrn import fused_recurrent_hgrn
-from mmfreelm.layers.rotary import RotaryEmbedding, apply_rotary_pos_emb
+from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
+from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
 
 class HGRNBitAttention(nn.Module):
     def __init__(
