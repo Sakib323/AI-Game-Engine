@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import warnings
 from einops import rearrange
 from typing import Optional, Tuple
+from transformers.cache_utils import Cache
 
 # Move imports that might cause circular dependencies inside functions or classes
 # from mmfreelm.models.hgrn_bit.modeling_hgrn_bit import AdaLNConditioning  # Moved below
@@ -13,6 +16,9 @@ from mmfreelm.modules.activations import swiglu, ACT2FN
 from mmfreelm.models.utils import RecurrentCache
 from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
 from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
+
+S
+
 
 class HGRNBitAttention(nn.Module):
     def __init__(
