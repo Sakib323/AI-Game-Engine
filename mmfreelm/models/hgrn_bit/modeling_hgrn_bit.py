@@ -140,6 +140,8 @@ class HGRNBitBlock(nn.Module):
         label: Optional[torch.LongTensor] = None,     # Label input
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        print(f"Input hidden_states shape: {hidden_states.shape}")
+        print(f"attn_norm weight shape: {self.attn_norm.weight.shape}")
         residual = hidden_states
         hidden_states = self.attn_norm(hidden_states)
 
