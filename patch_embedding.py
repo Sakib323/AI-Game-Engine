@@ -1,3 +1,4 @@
+# patch_embedding.py
 import torch
 import torch.nn as nn
 import numpy as np
@@ -65,7 +66,7 @@ class PatchEmbedding(nn.Module):
 
         return x
 
-def process_noised_image(noised_image, img_size=224, patch_size=14, embed_dim=768):
+def process_noised_image(noised_image, img_size=224, patch_size=14, embed_dim=768, in_channels=3):
     """
     Process a noised image through the patch embedding pipeline.
     
@@ -74,12 +75,13 @@ def process_noised_image(noised_image, img_size=224, patch_size=14, embed_dim=76
         img_size (int): Target image size (default: 224).
         patch_size (int): Patch size (default: 14).
         embed_dim (int): Embedding dimension (default: 768).
+        in_channels (int): Number of input channels (default: 3).
     
     Returns:
         torch.Tensor: Patch embeddings with CLS token, shape (batch_size, num_patches + 1, embed_dim).
     """
     # Initialize the patch embedding module
-    patch_embed = PatchEmbedding(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim)
+    patch_embed = PatchEmbedding(img_size=img_size, patch_size=patch_size, in_channels=in_channels, embed_dim=embed_dim)
     
     # Ensure input is on the correct device
     device = noised_image.device
