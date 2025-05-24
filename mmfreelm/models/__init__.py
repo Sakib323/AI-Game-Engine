@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from mmfreelm.models.hgrn_bit import HGRNBitConfig, HGRNBitDiT, HGRNBitModel
+from mmfreelm.models.hgrn_bit import HGRNBitConfig, HGRNBitForCausalLM, HGRNBitModel
 __all__ = [
-    'HGRNBitConfig', 'HGRNBitDiT', 'HGRNBitModel',
+    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel',
 
 ]
