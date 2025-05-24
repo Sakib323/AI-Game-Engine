@@ -177,7 +177,7 @@ class HGRNBitBlock(nn.Module):
         outputs = (hidden_states, attentions, past_key_values)
         return outputs
 
-class HGRNBitDiT(HGRNBitPreTrainedModel):
+class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
     def __init__(self, config: HGRNBitConfig, patch_size=4, in_channels=4):
         super().__init__(config)
         self.config = config
