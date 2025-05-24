@@ -46,13 +46,16 @@ class AdaLNConditioning(nn.Module):
         self.mlp = HGRNBitMLP(
             hidden_size=input_dim,
             intermediate_size=hidden_size * 2,
-            hidden_act='swish'
+            hidden_act='swish',
+            output_dim=hidden_size * 2
         )
         self.norm = RMSNorm(hidden_size * 2, eps=eps)
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
 
     def forward(self, condition: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        print(f"AdaLNConditioning: condition shape before mlp = {condition.shape}")
         x = self.mlp(condition)
+        print(f"AdaLNConditioning: x shape after mlp = {x.shape}")
         x = self.norm(x)
         params = self.out_proj(x)
         scale, shift = params.chunk(2, dim=-1)
@@ -64,10 +67,10 @@ class HGRNBitMLP(nn.Module):
         hidden_size: int,
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
-        hidden_act: str = 'swish'
+        hidden_act: str = 'swish',
+        output_dim: Optional[int] = None
     ) -> None:
         super().__init__()
-
         self.hidden_size = hidden_size
         if hidden_ratio is None:
             hidden_ratio = 4
@@ -76,9 +79,10 @@ class HGRNBitMLP(nn.Module):
             intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
         self.hidden_ratio = hidden_ratio
         self.intermediate_size = intermediate_size
+        self.output_dim = output_dim if output_dim is not None else hidden_size
 
         self.gate_proj = BitLinear(self.hidden_size, self.intermediate_size * 2, bias=False)
-        self.down_proj = BitLinear(self.intermediate_size, self.hidden_size, bias=False)
+        self.down_proj = BitLinear(self.intermediate_size, self.output_dim, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
@@ -86,7 +90,8 @@ class HGRNBitMLP(nn.Module):
         gate, y = y.chunk(2, -1)
         z = self.down_proj(swiglu(gate, y))
         return z
-
+    
+    
 class HGRNBitBlock(nn.Module):
     def __init__(self, config: HGRNBitConfig, layer_idx: int):
         super().__init__()
@@ -114,8 +119,8 @@ class HGRNBitBlock(nn.Module):
         self.mlp_adaln = AdaLNConditioning(input_dim=config.hidden_size, hidden_size=config.hidden_size, eps=config.rms_norm_eps)
 
         # Embeddings for conditioning inputs (timestep t and label y)
-        self.timestep_embedding = nn.Embedding(config.diffusion_timesteps, config.hidden_size)  # e.g., 1000 timesteps
-        self.label_embedding = nn.Embedding(10, config.hidden_size)  # Assuming 10 classes for labels
+        self.timestep_embedding = nn.Embedding(config.diffusion_timesteps, config.hidden_size)
+        self.label_embedding = nn.Embedding(10, config.hidden_size)
 
         # MLP initialization
         if config.moe:
@@ -136,8 +141,8 @@ class HGRNBitBlock(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         lower_bound: Optional[torch.Tensor] = False,
-        timestep: Optional[torch.LongTensor] = None,  # Timestep input
-        label: Optional[torch.LongTensor] = None,     # Label input
+        timestep: Optional[torch.LongTensor] = None,
+        label: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         print(f"Input hidden_states shape: {hidden_states.shape}")
@@ -148,10 +153,10 @@ class HGRNBitBlock(nn.Module):
         # Prepare conditioning input for adaLN
         condition = torch.zeros(hidden_states.shape[0], self.hidden_size, device=hidden_states.device)
         if timestep is not None:
-            timestep_embed = self.timestep_embedding(timestep)  # Shape: (batch_size, hidden_size)
+            timestep_embed = self.timestep_embedding(timestep)
             condition = condition + timestep_embed
         if label is not None:
-            label_embed = self.label_embedding(label)  # Shape: (batch_size, hidden_size)
+            label_embed = self.label_embedding(label)
             condition = condition + label_embed
 
         # Attention layer with adaLN
@@ -163,14 +168,12 @@ class HGRNBitBlock(nn.Module):
             output_attentions=output_attentions,
             lower_bound=lower_bound
         )
-        # Apply adaLN to attention output
         scale, shift = self.attn_adaln(condition)
         hidden_states = hidden_states * (1 + scale) + shift
 
         # MLP layer with adaLN
         hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
         hidden_states = self.mlp(hidden_states)
-        # Apply adaLN to MLP output
         scale, shift = self.mlp_adaln(condition)
         hidden_states = hidden_states * (1 + scale) + shift
 
@@ -178,7 +181,6 @@ class HGRNBitBlock(nn.Module):
 
         outputs = (hidden_states, attentions, past_key_values)
         return outputs
-
 # Restored HGRNBitModel class for compatibility with other files
 class HGRNBitModel(HGRNBitPreTrainedModel):
     def __init__(self, config: HGRNBitConfig):
