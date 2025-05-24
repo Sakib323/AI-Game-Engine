@@ -413,6 +413,143 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
         # Remove CLS token and project to noise
         hidden_states = hidden_states[:, 1:, :]  # (batch_size, num_patches, hidden_size)
         noise = self.final_layer(hidden_states)  # (batch_size, num_patches, in_channels * patch_size * patch_size)
+        print(f"After final_layer: {noise.shape}")
+        noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
+        print(f"After first view: {noise.shape}")
+        noise = noise.permute(0, 2, 1, 3, 4)
+        print(f"After permute: {noise.shape}")
+        noise = noise.reshape(batch_size, self.in_channels, self.latent_size, self.latent_size)
+        print(f"After reshape: {noise.shape}")
+
+        next_cache = None
+        if use_cache:
+            next_cache = past_key_values.to_legacy_cache()
+
+        if not return_dict:
+            return tuple(x for x in [noise, next_cache, all_hidden_states, all_attns] if x is not None)
+        return BaseModelOutputWithPast(
+            last_hidden_state=noise,
+            past_key_values=next_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_attns
+        )
+    def __init__(self, config: HGRNBitConfig, patch_size=4, in_channels=4):
+        super().__init__(config)
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.patch_size = patch_size
+        self.in_channels = in_channels
+
+        # Compute the number of patches (assuming latent size 32x32)
+        self.latent_size = 32  # Hardcoded for now, can be made configurable
+        self.num_patches = (self.latent_size // self.patch_size) ** 2  # e.g., (32/4)^2 = 64
+
+        # CLS token
+        self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+
+        if config.use_lower_bound:
+            self.lower_bounds = nn.Parameter(torch.zeros(config.num_hidden_layers, config.hidden_size))
+
+        # DiT blocks
+        self.layers = nn.ModuleList([HGRNBitBlock(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+        # Final projection to output noise (same shape as input latent)
+        self.final_layer = nn.Sequential(
+            RMSNorm(config.hidden_size, eps=config.rms_norm_eps),
+            nn.Linear(config.hidden_size, self.in_channels * self.patch_size * self.patch_size, bias=False)
+        )
+
+        self.gradient_checkpointing = False
+        self.post_init()
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,  # Shape: (batch_size, num_patches, hidden_size)
+        timestep: Optional[torch.LongTensor] = None,
+        label: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Tuple[List[torch.Tensor]]] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # Add CLS token to hidden states
+        batch_size = hidden_states.shape[0]
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)  # (batch_size, 1, hidden_size)
+        hidden_states = torch.cat((cls_tokens, hidden_states), dim=1)  # (batch_size, num_patches + 1, hidden_size)
+
+        # Prepare attention mask if provided
+        if attention_mask is not None:
+            cls_mask = torch.ones(batch_size, 1, device=hidden_states.device)
+            attention_mask = torch.cat((cls_mask, attention_mask), dim=1)
+
+        if use_cache:
+            if past_key_values is None:
+                past_key_values = [layer.attn.init_state(batch_size) for layer in self.layers]
+            if not isinstance(past_key_values, RecurrentCache):
+                past_key_values = RecurrentCache.from_legacy_cache(past_key_values)
+
+        if self.gradient_checkpointing and self.training:
+            if use_cache:
+                logger.warning_once(
+                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                )
+                use_cache = False
+
+        all_hidden_states = () if output_hidden_states else None
+        all_attns = () if output_attentions else None
+
+        if self.config.use_lower_bound:
+            lower_bounds = self.lower_bounds.softmax(0)
+            lower_bounds = lower_bounds.cumsum(0) - lower_bounds[0]
+
+        for i, layer in enumerate(self.layers):
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            lower_bound = lower_bounds[i] if self.config.use_lower_bound else None
+            if self.gradient_checkpointing and self.training:
+                hidden_states, attentions, past_key_values = self._gradient_checkpointing_func(
+                    layer.__call__,
+                    hidden_states,
+                    attention_mask,
+                    past_key_values,
+                    use_cache,
+                    output_attentions,
+                    lower_bound,
+                    timestep,
+                    label,
+                )
+            else:
+                hidden_states, attentions, past_key_values = layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    past_key_values=past_key_values,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                    lower_bound=lower_bound,
+                    timestep=timestep,
+                    label=label,
+                )
+
+            if output_attentions:
+                all_attns += (attentions,)
+
+        hidden_states = self.norm(hidden_states)
+
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        # Remove CLS token and project to noise
+        hidden_states = hidden_states[:, 1:, :]  # (batch_size, num_patches, hidden_size)
+        noise = self.final_layer(hidden_states)  # (batch_size, num_patches, in_channels * patch_size * patch_size)
         noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
         noise = noise.permute(0, 2, 1, 3, 4)  # (batch_size, in_channels, num_patches, patch_size, patch_size)
         # Reshape to (batch_size, in_channels, latent_size, latent_size)
