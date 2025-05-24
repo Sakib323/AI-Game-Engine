@@ -1,22 +1,22 @@
+# -*- coding: utf-8 -*-
+
+# "HGRN2: Gated Linear RNNs with State Expansion"[https://arxiv.org/abs/2404.07904]
+
 from __future__ import annotations
+
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-import warnings
 from einops import rearrange
-from typing import Optional, Tuple
 from transformers.cache_utils import Cache
 
-# Move imports that might cause circular dependencies inside functions or classes
-# from mmfreelm.models.hgrn_bit.modeling_hgrn_bit import AdaLNConditioning  # Moved below
-
-from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
-from mmfreelm.modules import FusedRMSNormSwishGate, RMSNorm, ShortConvolution
-from mmfreelm.modules.activations import swiglu, ACT2FN
-from mmfreelm.models.utils import RecurrentCache
+from mmfreelm.modules import FusedRMSNormSwishGate, ShortConvolution
+from mmfreelm.modules.activations import swiglu
 from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
 from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
-
+#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
+from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
 class HGRNBitAttention(nn.Module):
     def __init__(
@@ -34,14 +34,14 @@ class HGRNBitAttention(nn.Module):
         rotary_embeddings: bool = False, 
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
-    ) -> None:
+    ) -> HGRNAttention:
         super().__init__()
         if rotary_embeddings:
             print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
 
         self.mode = mode
         self.hidden_size = hidden_size
-        self.num_heads = num_heads or (hidden_size // 64)  # Default to hidden_size // 64 heads
+        self.num_heads = num_heads
         self.expand_ratio = expand_ratio
         self.input_dim = int(hidden_size * expand_ratio)
         self.head_dim = self.input_dim // self.num_heads
@@ -53,8 +53,8 @@ class HGRNBitAttention(nn.Module):
 
         self.layer_idx = layer_idx
 
-        assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
-        assert self.hidden_size % self.num_heads == 0, f"hidden size must be divisible by num_heads of {self.num_heads}"
+        assert mode in ['fused_recurrent'], f"Not suppoerted mode `{mode}`."
+        assert self.hidden_size % num_heads == 0, f"hidden size must be divisible by num_heads of {num_heads}"
 
         self.i_proj = BitLinear(hidden_size, self.input_dim, bias=False)
         self.f_proj = BitLinear(hidden_size, self.input_dim, bias=False)
@@ -81,10 +81,6 @@ class HGRNBitAttention(nn.Module):
                 use_ternary=use_ternary_rope
             )
 
-        # --- Moved: Lazy import of AdaLNConditioning ---
-        from mmfreelm.models.hgrn_bit.modeling_hgrn_bit import AdaLNConditioning
-        self.ada_ln = AdaLNConditioning(input_dim=hidden_size, hidden_size=self.input_dim, eps=layernorm_eps)
-
         self.apply(self._initialize_weights)
 
     def _initialize_weights(self, module):
@@ -104,14 +100,16 @@ class HGRNBitAttention(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         lower_bound: Optional[torch.Tensor] = None,
-        image_condition: Optional[torch.Tensor] = None,
+        **kwargs
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Cache]]:
+        # launching the triton kernel for just one token will actually be slower
         mode = 'fused_recurrent' if hidden_states.shape[1] == 1 else self.mode
 
         last_state = past_key_values[self.layer_idx] if use_cache else None
         if self.use_short_conv:
             conv_state = last_state[0] if use_cache else None
             if self.share_conv_kernel:
+                # conv state is updated inplace
                 hidden_states = self.h_conv1d(hidden_states, attention_mask, conv_state)
                 i = self.i_proj(hidden_states)
                 f = self.f_proj(hidden_states)
@@ -125,12 +123,15 @@ class HGRNBitAttention(nn.Module):
             f = self.f_proj(hidden_states)
 
         f = f.sigmoid()
+        # the lower bound for the first layer is zero
         if lower_bound is not None and self.layer_idx > 0:
             f = lower_bound + (1 - lower_bound) * f
         i = swiglu(i, 1 - f)
+        # dealing with left-padding
         if attention_mask is not None:
             i = i.mul_(attention_mask.unsqueeze(-1))
             
+        # Reshape for rotary embeddings
         i = rearrange(i, 'b l (h d) -> b h l d', h=self.num_heads)
         f = rearrange(f, 'b l (h d) -> b h l d', h=self.num_heads)
         
@@ -138,12 +139,6 @@ class HGRNBitAttention(nn.Module):
             seq_len = i.shape[2]
             cos, sin = self.rotary_emb(i, seq_len=seq_len)
             i, f = apply_rotary_pos_emb(i, f, cos, sin)
-
-        # Apply adaLN conditioning
-        if image_condition is not None:
-            scale, shift = self.ada_ln(image_condition)
-            i = i * (1 + scale.unsqueeze(1).unsqueeze(2)) + shift.unsqueeze(1).unsqueeze(2)
-            f = f * (1 + scale.unsqueeze(1).unsqueeze(2)) + shift.unsqueeze(1).unsqueeze(2)
 
         recurrent_state = last_state[-1] if use_cache else None
         if mode == 'fused_recurrent':
