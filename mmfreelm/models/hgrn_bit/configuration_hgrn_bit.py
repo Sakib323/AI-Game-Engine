@@ -4,15 +4,13 @@ from typing import Optional
 
 from transformers.configuration_utils import PretrainedConfig
 
-
 class HGRNBitConfig(PretrainedConfig):
-
     model_type = 'hgrn_bit'
     keys_to_ignore_at_inference = ['past_key_values']
 
     def __init__(
         self,
-        vocab_size: int = 32000,
+        vocab_size: int = 32000,  # Not needed for DiT, kept for compatibility
         hidden_size: int = 2048,
         num_hidden_layers: int = 24,
         attn_mode: str = "fused_recurrent",
@@ -37,14 +35,15 @@ class HGRNBitConfig(PretrainedConfig):
         rotary_embeddings: bool = False,
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = True,
-
-        moe: bool = False,  # <-- NEW FLAG
+        moe: bool = False,
         num_experts: int = 8,
         num_experts_per_tok: int = 2,
         moe_intermediate_size: Optional[int] = None,
-
+        diffusion_timesteps: int = 1000,  # Added for DiT
+        patch_size: int = 4,  # Added for DiT
+        in_channels: int = 4,  # Added for DiT
+        latent_size: int = 32,  # Added for DiT
         **kwargs
-        
     ):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
@@ -64,16 +63,17 @@ class HGRNBitConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.initializer_range = initializer_range
         self.fuse_cross_entropy = fuse_cross_entropy
-
         self.rotary_embeddings = rotary_embeddings
         self.rope_theta = rope_theta
         self.use_ternary_rope = use_ternary_rope
-
-        self.moe = moe  # <-- NEW
+        self.moe = moe
         self.num_experts = num_experts
         self.num_experts_per_tok = num_experts_per_tok
         self.moe_intermediate_size = moe_intermediate_size or (hidden_size * 4)
-        # Rest of existing initialization...
+        self.diffusion_timesteps = diffusion_timesteps
+        self.patch_size = patch_size
+        self.in_channels = in_channels
+        self.latent_size = latent_size
 
         super().__init__(
             pad_token_id=pad_token_id,
