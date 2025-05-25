@@ -410,17 +410,15 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        # Remove CLS token and project to noise
-        hidden_states = hidden_states[:, 1:, :]  # (batch_size, num_patches, hidden_size)
-        noise = self.final_layer(hidden_states)  # (batch_size, num_patches, in_channels * patch_size * patch_size)
+        hidden_states = hidden_states[:, 1:, :]  
+        noise = self.final_layer(hidden_states)  
         print(f"After final_layer: {noise.shape}")
         noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
         print(f"After first view: {noise.shape}")
-        noise = noise.permute(0, 2, 1, 3, 4)
+        noise = noise.permute(0, 2, 1, 3, 4).contiguous() 
         print(f"After permute: {noise.shape}")
-        noise = noise.reshape(batch_size, self.in_channels, self.latent_size, self.latent_size)
+        noise = noise.reshape(batch_size, self.in_channels, self.latent_size, self.latent_size)  
         print(f"After reshape: {noise.shape}")
-
         next_cache = None
         if use_cache:
             next_cache = past_key_values.to_legacy_cache()
