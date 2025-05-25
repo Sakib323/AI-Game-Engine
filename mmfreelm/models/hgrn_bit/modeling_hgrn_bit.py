@@ -412,8 +412,9 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
 
         hidden_states = hidden_states[:, 1:, :]  
         noise = self.final_layer(hidden_states)  
+        print(f"Is noise contiguous after permute? {noise.is_contiguous()}")
         print(f"After final_layer: {noise.shape}")
-        noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
+        noise = noise.reshape(batch_size, self.in_channels, self.latent_size, self.latent_size)
         print(f"After first view: {noise.shape}")
         noise = noise.permute(0, 2, 1, 3, 4).contiguous() 
         print(f"After permute: {noise.shape}")
