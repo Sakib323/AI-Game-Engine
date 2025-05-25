@@ -947,12 +947,17 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
             all_hidden_states += (hidden_states,)
 
         # Remove CLS token and project to noise
-        hidden_states = hidden_states[:, 1:, :]  # (batch_size, num_patches, hidden_size)
-        noise = self.final_layer(hidden_states)  # (batch_size, num_patches, in_channels * patch_size * patch_size)
-        noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
-        noise = noise.permute(0, 2, 1, 3, 4)  # (batch_size, in_channels, num_patches, patch_size, patch_size)
-        # Reshape to (batch_size, in_channels, latent_size, latent_size)
-        noise = noise.view(batch_size, self.in_channels, self.latent_size, self.latent_size)
+        hidden_states = hidden_states[:, 1:, :]  
+        noise = self.final_layer(hidden_states)
+        noise = noise.reshape(batch_size,
+                              self.num_patches,self.in_channels,self.patch_size,self.patch_size).contiguous()
+        noise = noise.permute(0, 2, 1, 3, 4).contiguous()
+        try:
+            noise = noise.reshape(batch_size,self.in_channels,self.latent_size,  self.latent_size)
+        except RuntimeError as e:
+            raise ValueError(f"Reshape failure: {e}. Check latent_size={self.latent_size} vs patch_size={self.patch_size}") from e
+        assert noise.is_contiguous(), "Final tensor must be contiguous"
+
 
         next_cache = None
         if use_cache:
