@@ -555,30 +555,15 @@ class BitLinear(nn.Linear):
         super(BitLinear, self).__init__(in_features, out_features, bias=bias)
         self.norm = RMSNorm(in_features, eps=1e-8)
 
-    def forward(self, x):
-        """
-        Overrides the forward pass to include quantization.
-
-        Args:
-            x: An input tensor with shape [n, d].
-
-        Returns:
-            An output tensor with shape [n, d].
-        """
-        # Weight tensor
-        w = self.weight
-
-        # Apply RMS normalization to the input
-        x_norm = self.norm(x)
-
-        # Apply quantization to both activations and weights
-        # Uses Straight-Through Estimator (STE) trick with .detach() for gradient flow
-        x_quant = x_norm + (activation_quant(x_norm) - x_norm).detach()
-        w_quant = w + (weight_quant(w) - w).detach()
-        # Perform linear operation with quantized values
-        y = F.linear(x_quant, w_quant)
-
-        return y
+# In fusedbitnet.py, update forward pass:
+def forward(self, x):
+    x_norm = self.norm(x)
+    
+    # Add gradient bypass for quantization
+    x_quant = x_norm + (activation_quant(x_norm) - x_norm).detach()  # STE trick
+    w_quant = self.weight + (weight_quant(self.weight) - self.weight).detach()
+    
+    return F.linear(x_quant, w_quant, self.bias)
 
 
 class FusedBitLinear(BitLinear):

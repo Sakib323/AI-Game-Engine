@@ -53,9 +53,9 @@ class AdaLNConditioning(nn.Module):
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
 
     def forward(self, condition: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        print(f"AdaLNConditioning: condition shape before mlp = {condition.shape}")
+
         x = self.mlp(condition)
-        print(f"AdaLNConditioning: x shape after mlp = {x.shape}")
+
         x = self.norm(x)
         params = self.out_proj(x)
         scale, shift = params.chunk(2, dim=-1)
