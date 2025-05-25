@@ -409,12 +409,11 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
-            hidden_states = hidden_states[:, 1:, :]  
-            noise = self.final_layer(hidden_states) 
+            hidden_states = hidden_states[:, 1:, :]
+            noise = self.final_layer(hidden_states)
             noise = noise.view(batch_size, self.num_patches, self.in_channels, self.patch_size, self.patch_size)
-            noise = noise.permute(0, 2, 1, 3, 4)  
-            noise = noise.reshape(batch_size, self.in_channels, self.latent_size, self.latent_size)  # Changed from .view()
-
+            noise = noise.permute(0, 2, 1, 3, 4).contiguous() 
+            noise = noise.view(batch_size,self.in_channels,self.latent_size, self.latent_size)
         next_cache = None
         if use_cache:
             next_cache = past_key_values.to_legacy_cache()
