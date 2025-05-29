@@ -456,67 +456,50 @@ class AdaLNConditioning(nn.Module):
     
 
 class TerneryDit(nn.Module):
-    """
-    A Ternary Diffusion Transformer model that conditions on text via AdaLN 
-    and predicts noise for image patches. Based on HGRNBit transformer blocks.
-    """
-    def __init__(self, config: HGRNBitConfig, num_timesteps: int, patch_dim: int):
-        """
-        Args:
-            config: HGRNBitConfig with hidden_size = patch_dim (for image patches).
-            num_timesteps: maximum diffusion timesteps (for time embedding).
-            patch_dim: dimensionality of each patch embedding (must match config.hidden_size).
-        """
+    def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
+                 num_timesteps: int, patch_dim: int):
         super().__init__()
-        # Text encoder (HGRNBit) to embed the input_ids -> produce text features
-        self.text_model = HGRNBitModel(config)  
+        # Text encoder with custom config
+        self.text_model = HGRNBitModel(text_config)
         
-        # Time embedding to encode diffusion timestep
-        self.time_embedding = nn.Embedding(num_timesteps, config.hidden_size)
+        # Time embedding
+        self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
         
-        # Diffusion transformer (HGRNBit) for image patches
-        # We use inputs_embeds=patch_embeddings in forward, so no additional embedding layer is needed here.
-        self.diffusion_model = HGRNBitModel(config)  
+        # Diffusion model with custom config (enable rotary embeddings)
+        diffusion_config.rotary_embeddings = True
+        self.diffusion_model = HGRNBitModel(diffusion_config)
         
-        # Project (text_feat + time_emb) -> 2 * hidden_size for AdaLN scale+shift
-        self.cond_proj = nn.Linear(config.hidden_size * 2, config.hidden_size * 2)
+        # Conditioning projection (AdaLN handles per-block conditioning)
+        self.cond_proj = AdaLNConditioning(
+            input_dim=text_config.hidden_size + diffusion_config.hidden_size,
+            hidden_size=diffusion_config.hidden_size,
+            eps=diffusion_config.rms_norm_eps
+        )
         
-        # Final noise predictor head: from hidden size -> patch_dim
-        self.noise_head = nn.Linear(config.hidden_size, patch_dim)
+        # Noise prediction head
+        self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
+        self.patch_size = patch_size  # Needed for output reshaping
 
-    def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor, 
-                input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
-        """
-        Args:
-            patch_embeddings: Tensor of shape [batch, num_patches, patch_dim], the noisy image patch embeddings.
-            timesteps: Tensor of shape [batch], the integer diffusion timesteps for each sample.
-            input_ids: Tensor of shape [batch, text_seq_len], token IDs of the text prompt.
-            attention_mask: Tensor of shape [batch, text_seq_len], mask for the text prompt.
-        Returns:
-            predicted_noise: Tensor of shape [batch, num_patches, patch_dim], the predicted noise for each patch.
-        """
-        # Encode text prompt into features
-        text_outputs = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
-        # Pool text features (e.g., mean of token embeddings)
-        text_feats = text_outputs.last_hidden_state.mean(dim=1)  # [batch, hidden_size]
+    def forward(self, patch_emb: torch.Tensor, timesteps: torch.LongTensor, 
+                input_ids: torch.LongTensor, attn_mask: torch.LongTensor) -> torch.Tensor:
+        # Text features (use first token)
+        text_out = self.text_model(input_ids=input_ids, attention_mask=attn_mask)
+        text_feats = text_out.last_hidden_state[:, 0]  # [batch, text_hidden_size]
         
-        # Embed timesteps and add to patch embeddings
-        time_embeds = self.time_embedding(timesteps)               # [batch, hidden_size]
-        # Broadcast-add time embedding to each patch vector
-        patch_in = patch_embeddings + time_embeds.unsqueeze(1)    # [batch, num_patches, hidden_size]
+        # Time embeddings
+        time_emb = self.time_embedding(timesteps)  # [batch, diffusion_hidden_size]
         
-        # Run the diffusion transformer on patches (no text tokens; use inputs_embeds directly)
-        diff_out = self.diffusion_model(inputs_embeds=patch_in)
-        hidden_states = diff_out.last_hidden_state               # [batch, num_patches, hidden_size]
+        # Combine text + time for conditioning
+        cond = torch.cat([text_feats, time_emb], dim=-1)  # [batch, text_hidden + diffusion_hidden]
+        gamma_beta = self.cond_proj(cond)  # [batch, diffusion_hidden * 2]
         
-        # Prepare AdaLN conditioning: combine text features and time embedding
-        cond = torch.cat([text_feats, time_embeds], dim=-1)     # [batch, hidden_size*2]
-        gamma_beta = self.cond_proj(cond)                       # [batch, hidden_size*2]
-        gamma, beta = gamma_beta.chunk(2, dim=-1)               # each [batch, hidden_size]
-        # Apply AdaLN-style modulation to hidden states
-        # Expand gamma/beta to [batch, num_patches, hidden_size] for broadcasting
-        hidden_states = hidden_states * (1 + gamma.unsqueeze(1)) + beta.unsqueeze(1)
+        # Process patches with conditioning
+        diff_out = self.diffusion_model(
+            inputs_embeds=patch_emb, 
+            condition=gamma_beta
+        )
+        hidden_states = diff_out.last_hidden_state
         
-        # Predict noise with a linear head
-        predicted_noise = self.noise_head(hidden_states)        # [batch, num_patches, patch_dim]
+        # Predict and reshape noise
+        predicted_noise = self.noise_head(hidden_states)  # [batch, num_patches, patch_dim]
         return predicted_noise
