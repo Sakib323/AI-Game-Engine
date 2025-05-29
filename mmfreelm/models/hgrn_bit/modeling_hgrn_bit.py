@@ -438,12 +438,14 @@ class AdaLNConditioning(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
         super().__init__()
         self.hidden_size = hidden_size
-        self.mlp = HGRNBitMLP(
-            hidden_size=input_dim,
-            intermediate_size=hidden_size * 2,
-            hidden_act='swish',
-            output_dim=hidden_size * 2
+        
+        # Use a simple linear layer instead of HGRNBitMLP
+        self.mlp = nn.Sequential(
+            BitLinear(input_dim, hidden_size * 2, bias=False),
+            nn.SiLU(),
+            BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
         )
+        
         self.norm = RMSNorm(hidden_size * 2, eps=eps)
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
 
@@ -453,53 +455,32 @@ class AdaLNConditioning(nn.Module):
         params = self.out_proj(x)
         scale, shift = params.chunk(2, dim=-1)
         return scale, shift
-    
+
 
 class TerneryDit(nn.Module):
     def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
                  num_timesteps: int, patch_dim: int):
         super().__init__()
-        # Text encoder with custom config
         self.text_model = HGRNBitModel(text_config)
-        
-        # Time embedding
         self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
-        
-        # Diffusion model with custom config (enable rotary embeddings)
         diffusion_config.rotary_embeddings = True
         self.diffusion_model = HGRNBitModel(diffusion_config)
-        
-        # Conditioning projection (AdaLN handles per-block conditioning)
         self.cond_proj = AdaLNConditioning(
             input_dim=text_config.hidden_size + diffusion_config.hidden_size,
             hidden_size=diffusion_config.hidden_size,
             eps=diffusion_config.rms_norm_eps
         )
-        
-        # Noise prediction head
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
-        self.patch_size = patch_size  # Needed for output reshaping
 
     def forward(self, patch_emb: torch.Tensor, timesteps: torch.LongTensor, 
                 input_ids: torch.LongTensor, attn_mask: torch.LongTensor) -> torch.Tensor:
-        # Text features (use first token)
         text_out = self.text_model(input_ids=input_ids, attention_mask=attn_mask)
-        text_feats = text_out.last_hidden_state[:, 0]  # [batch, text_hidden_size]
-        
-        # Time embeddings
-        time_emb = self.time_embedding(timesteps)  # [batch, diffusion_hidden_size]
-        
-        # Combine text + time for conditioning
-        cond = torch.cat([text_feats, time_emb], dim=-1)  # [batch, text_hidden + diffusion_hidden]
-        gamma_beta = self.cond_proj(cond)  # [batch, diffusion_hidden * 2]
-        
-        # Process patches with conditioning
+        text_feats = text_out.last_hidden_state[:, 0]
+        time_emb = self.time_embedding(timesteps)
+        cond = torch.cat([text_feats, time_emb], dim=-1)
+        gamma_beta = self.cond_proj(cond)
         diff_out = self.diffusion_model(
             inputs_embeds=patch_emb, 
             condition=gamma_beta
         )
-        hidden_states = diff_out.last_hidden_state
-        
-        # Predict and reshape noise
-        predicted_noise = self.noise_head(hidden_states)  # [batch, num_patches, patch_dim]
-        return predicted_noise
+        return self.noise_head(diff_out.last_hidden_state)
