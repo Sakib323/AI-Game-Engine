@@ -432,15 +432,15 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
 class AdaLNConditioning(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
         super().__init__()
         self.hidden_size = hidden_size
+        # Use a smaller MLP to save memory
         self.mlp = nn.Sequential(
-            BitLinear(input_dim, hidden_size * 2, bias=False),
+            BitLinear(input_dim, hidden_size, bias=False),
             nn.SiLU(),
-            BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
+            BitLinear(hidden_size, hidden_size * 2, bias=False)
         )
         self.norm = RMSNorm(hidden_size * 2, eps=eps)
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
@@ -457,6 +457,10 @@ class TerneryDit(nn.Module):
     def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
                  num_timesteps: int, patch_dim: int):
         super().__init__()
+        # Use gradient checkpointing to save memory
+        text_config.gradient_checkpointing = True
+        diffusion_config.gradient_checkpointing = True
+        
         self.text_model = HGRNBitModel(text_config)
         self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
         diffusion_config.rotary_embeddings = True
@@ -469,7 +473,7 @@ class TerneryDit(nn.Module):
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
 
     def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
-                input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:  # CHANGED: attn_mask → attention_mask
+                input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
         text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
         text_feats = text_out.last_hidden_state[:, 0]
         time_emb = self.time_embedding(timesteps)
