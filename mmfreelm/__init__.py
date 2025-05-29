@@ -7,7 +7,6 @@ from mmfreelm.models.hgrn_bit import (
     RotaryEmbedding,
     apply_rotary_pos_emb,
     rotate_half,
-    TerneryDit
 )
 
 __all__ = [
@@ -17,7 +16,6 @@ __all__ = [
     'RotaryEmbedding',
     'apply_rotary_pos_emb',
     'rotate_half',
-    'TerneryDit'
 ]
 
 __version__ = '0.1'
