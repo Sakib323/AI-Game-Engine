@@ -433,7 +433,6 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
             attentions=outputs.attentions,
         )
 
-
 class AdaLNConditioning(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
         super().__init__()
@@ -469,15 +468,15 @@ class TerneryDit(nn.Module):
         )
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
 
-    def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,  # CHANGED: patch_emb → patch_embeddings
-                input_ids: torch.LongTensor, attn_mask: torch.LongTensor) -> torch.Tensor:
-        text_out = self.text_model(input_ids=input_ids, attention_mask=attn_mask)
+    def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
+                input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:  # CHANGED: attn_mask → attention_mask
+        text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
         text_feats = text_out.last_hidden_state[:, 0]
         time_emb = self.time_embedding(timesteps)
         cond = torch.cat([text_feats, time_emb], dim=-1)
         gamma_beta = self.cond_proj(cond)
         diff_out = self.diffusion_model(
-            inputs_embeds=patch_embeddings,  # CHANGED: patch_emb → patch_embeddings
+            inputs_embeds=patch_embeddings,
             condition=gamma_beta
         )
         return self.noise_head(diff_out.last_hidden_state)
