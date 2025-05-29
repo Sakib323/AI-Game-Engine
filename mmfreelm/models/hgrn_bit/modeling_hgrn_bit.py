@@ -438,14 +438,11 @@ class AdaLNConditioning(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
         super().__init__()
         self.hidden_size = hidden_size
-        
-        # Use a simple linear layer instead of HGRNBitMLP
         self.mlp = nn.Sequential(
             BitLinear(input_dim, hidden_size * 2, bias=False),
             nn.SiLU(),
             BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
         )
-        
         self.norm = RMSNorm(hidden_size * 2, eps=eps)
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
 
@@ -456,7 +453,7 @@ class AdaLNConditioning(nn.Module):
         scale, shift = params.chunk(2, dim=-1)
         return scale, shift
 
-
+# Define TerneryDit with fixed conditioning
 class TerneryDit(nn.Module):
     def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
                  num_timesteps: int, patch_dim: int):
@@ -472,7 +469,7 @@ class TerneryDit(nn.Module):
         )
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
 
-    def forward(self, patch_emb: torch.Tensor, timesteps: torch.LongTensor, 
+    def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,  # CHANGED: patch_emb → patch_embeddings
                 input_ids: torch.LongTensor, attn_mask: torch.LongTensor) -> torch.Tensor:
         text_out = self.text_model(input_ids=input_ids, attention_mask=attn_mask)
         text_feats = text_out.last_hidden_state[:, 0]
@@ -480,7 +477,7 @@ class TerneryDit(nn.Module):
         cond = torch.cat([text_feats, time_emb], dim=-1)
         gamma_beta = self.cond_proj(cond)
         diff_out = self.diffusion_model(
-            inputs_embeds=patch_emb, 
+            inputs_embeds=patch_embeddings,  # CHANGED: patch_emb → patch_embeddings
             condition=gamma_beta
         )
         return self.noise_head(diff_out.last_hidden_state)
