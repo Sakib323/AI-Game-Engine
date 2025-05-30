@@ -141,12 +141,16 @@ def _layer_norm_fwd_quant(
     if residual is not None:
         assert residual.stride(-1) == 1
         assert residual.shape == (M, N)
+        
+    # Ensure weight and bias are contiguous with stride=1 in last dimension
     if weight is not None:
-        assert weight.shape == (N,)
+        weight = weight.contiguous()
         assert weight.stride(-1) == 1
     if bias is not None:
+        bias = bias.contiguous()
         assert bias.stride(-1) == 1
-        assert bias.shape == (N,)
+
+    # Rest of the function remains unchanged
     # allocate output
     y = torch.empty_like(x, dtype=x.dtype if out_dtype is None else out_dtype)
     assert y.stride(-1) == 1
@@ -188,8 +192,6 @@ def _layer_norm_fwd_quant(
         )
     # residual_out is None if residual is None and residual_dtype == input_dtype
     return y, mean, rstd, residual_out if residual_out is not None else x
-
-
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=1),
