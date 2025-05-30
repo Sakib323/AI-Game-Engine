@@ -437,9 +437,9 @@ class AdaLNConditioning(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.mlp = nn.Sequential(
-            BitLinear(input_dim, hidden_size, bias=False),  # Fixed layer dimensions
+            BitLinear(input_dim, hidden_size, bias=False),
             nn.SiLU(),
-            BitLinear(hidden_size, hidden_size * 2, bias=False)  # Fixed output size
+            BitLinear(hidden_size, hidden_size * 2, bias=False)
         )
         self.norm = RMSNorm(hidden_size * 2, eps=eps)
         self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
@@ -478,24 +478,25 @@ class TerneryDit(nn.Module):
 
     def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
                 input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
-        # Project patches
+        # Project patch embeddings to match diffusion hidden size
         patch_embeddings = self.proj(patch_embeddings)
         
-        # Get text features [CLS]
+        # Get text output and extract last hidden state
         text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
-        text_feats = text_out.last_hidden_state[:, 0]  # Use [CLS] token
+        text_feats = text_out.last_hidden_state[:, 0]
         
         # Get time embeddings
         time_emb = self.time_embedding(timesteps)
         
         # Combine text + time for conditioning
         cond = torch.cat([text_feats, time_emb], dim=-1)
-        scale, shift = self.cond_proj(cond)  # Get separate scale/shift
+        gamma_beta = self.cond_proj(cond)
         
         # Pass conditioning to diffusion model
         diff_out = self.diffusion_model(
             inputs_embeds=patch_embeddings,
-            condition=(scale, shift)  # Pass as tuple
+            condition=gamma_beta
         )
         
+        # Return noise prediction
         return self.noise_head(diff_out.last_hidden_state)
