@@ -436,7 +436,6 @@ class AdaLNConditioning(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
         super().__init__()
         self.hidden_size = hidden_size
-        # Use a smaller MLP to save memory
         self.mlp = nn.Sequential(
             BitLinear(input_dim, hidden_size, bias=False),
             nn.SiLU(),
@@ -457,7 +456,6 @@ class TerneryDit(nn.Module):
     def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
                  num_timesteps: int, patch_dim: int):
         super().__init__()
-        # Use gradient checkpointing to save memory
         text_config.gradient_checkpointing = True
         diffusion_config.gradient_checkpointing = True
         
@@ -465,22 +463,27 @@ class TerneryDit(nn.Module):
         self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
         diffusion_config.rotary_embeddings = True
         self.diffusion_model = HGRNBitModel(diffusion_config)
-        self.cond_proj = AdaLNConditioning(
-            input_dim=text_config.hidden_size + diffusion_config.hidden_size,
-            hidden_size=diffusion_config.hidden_size,
-            eps=diffusion_config.rms_norm_eps
-        )
+        
+        # Remove cond_proj since it's handled in the blocks
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
 
     def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
                 input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
+        # Get text output and extract last hidden state
         text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
-        text_feats = text_out.last_hidden_state[:, 0]
+        text_feats = text_out.last_hidden_state[:, 0]  # Ensure we get a tensor
+        
+        # Get time embeddings
         time_emb = self.time_embedding(timesteps)
+        
+        # Combine text + time for conditioning
         cond = torch.cat([text_feats, time_emb], dim=-1)
-        gamma_beta = self.cond_proj(cond)
+        
+        # Pass conditioning directly to diffusion model
         diff_out = self.diffusion_model(
             inputs_embeds=patch_embeddings,
-            condition=gamma_beta
+            condition=cond  # Pass the combined tensor directly
         )
+        
+        # Return noise prediction
         return self.noise_head(diff_out.last_hidden_state)
