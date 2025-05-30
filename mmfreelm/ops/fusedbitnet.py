@@ -584,29 +584,16 @@ class BitLinear(nn.Linear):
 
 
 class FusedBitLinear(BitLinear):
-    """
-    A custom linear layer that applies quantization on both activations and weights.
-    This is primarily for training; kernel optimization is needed for efficiency in deployment.
-    """
-
-    def __init__(self, in_features, out_features, bias=False):
-        """
-        Initializes the BitLinear layer.
-
-        Args:
-            in_features: Size of each input sample.
-            out_features: Size of each output sample.
-            bias: If set to False, the layer will not learn an additive bias. Default: True.
-        """
-        # Initialize the superclass nn.Linear with the given parameters
-        super(FusedBitLinear, self).__init__(in_features, out_features, bias=bias)
-
+    """Fused BitLinear with corrected weight handling"""
+    
     def forward(self, x):
+        # Transpose weight for kernel compatibility
+        weight_t = self.weight.t().contiguous()
         return layer_norm_linear_quant_fn(
             x,
             self.norm.weight,
             self.norm.bias,
-            self.weight,
+            weight_t,  # Corrected weight shape
             self.bias,
             is_rms_norm=True
         )
