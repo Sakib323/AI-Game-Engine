@@ -141,16 +141,12 @@ def _layer_norm_fwd_quant(
     if residual is not None:
         assert residual.stride(-1) == 1
         assert residual.shape == (M, N)
-        
-    # Ensure weight and bias are contiguous with stride=1 in last dimension
     if weight is not None:
-        weight = weight.contiguous()
+        assert weight.shape == (N,)
         assert weight.stride(-1) == 1
     if bias is not None:
-        bias = bias.contiguous()
         assert bias.stride(-1) == 1
-
-    # Rest of the function remains unchanged
+        assert bias.shape == (N,)
     # allocate output
     y = torch.empty_like(x, dtype=x.dtype if out_dtype is None else out_dtype)
     assert y.stride(-1) == 1
@@ -192,6 +188,8 @@ def _layer_norm_fwd_quant(
         )
     # residual_out is None if residual is None and residual_dtype == input_dtype
     return y, mean, rstd, residual_out if residual_out is not None else x
+
+
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=1),
@@ -584,23 +582,29 @@ class BitLinear(nn.Linear):
 
 
 class FusedBitLinear(BitLinear):
-    """Fused BitLinear with corrected weight handling"""
-    
+    """
+    A custom linear layer that applies quantization on both activations and weights.
+    This is primarily for training; kernel optimization is needed for efficiency in deployment.
+    """
+
+    def __init__(self, in_features, out_features, bias=False):
+        """
+        Initializes the BitLinear layer.
+
+        Args:
+            in_features: Size of each input sample.
+            out_features: Size of each output sample.
+            bias: If set to False, the layer will not learn an additive bias. Default: True.
+        """
+        # Initialize the superclass nn.Linear with the given parameters
+        super(FusedBitLinear, self).__init__(in_features, out_features, bias=bias)
+
     def forward(self, x):
-        # Reshape input to 2D tensor if needed
-        original_shape = x.shape
-        if x.dim() > 2:
-            x = x.reshape(-1, x.shape[-1])
-            
-        # Apply fused operation
-        out = layer_norm_linear_quant_fn(
+        return layer_norm_linear_quant_fn(
             x,
             self.norm.weight,
             self.norm.bias,
-            self.weight,  # Use original weight (out_features, in_features)
+            self.weight,
             self.bias,
             is_rms_norm=True
         )
-        
-        # Reshape output to match original dimensions
-        return out.reshape(original_shape[:-1] + (self.weight.shape[0],))
