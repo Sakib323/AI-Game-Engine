@@ -462,27 +462,40 @@ class TerneryDit(nn.Module):
         self.text_model = HGRNBitModel(text_config)
         self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
         diffusion_config.rotary_embeddings = True
+        
+        # Add projection layer to match hidden sizes
+        self.proj = BitLinear(patch_dim, diffusion_config.hidden_size, bias=False)
+        
         self.diffusion_model = HGRNBitModel(diffusion_config)
         
-        # Remove cond_proj since it's handled in the blocks
+        # Adjust conditioning dimension
+        self.cond_proj = AdaLNConditioning(
+            input_dim=text_config.hidden_size + diffusion_config.hidden_size,
+            hidden_size=diffusion_config.hidden_size,
+            eps=diffusion_config.rms_norm_eps
+        )
         self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
 
     def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
                 input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
+        # Project patch embeddings to match diffusion hidden size
+        patch_embeddings = self.proj(patch_embeddings)
+        
         # Get text output and extract last hidden state
         text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
-        text_feats = text_out.last_hidden_state[:, 0]  # Ensure we get a tensor
+        text_feats = text_out.last_hidden_state[:, 0]
         
         # Get time embeddings
         time_emb = self.time_embedding(timesteps)
         
         # Combine text + time for conditioning
         cond = torch.cat([text_feats, time_emb], dim=-1)
+        gamma_beta = self.cond_proj(cond)
         
-        # Pass conditioning directly to diffusion model
+        # Pass conditioning to diffusion model
         diff_out = self.diffusion_model(
             inputs_embeds=patch_embeddings,
-            condition=cond  # Pass the combined tensor directly
+            condition=gamma_beta
         )
         
         # Return noise prediction
