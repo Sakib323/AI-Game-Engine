@@ -606,5 +606,9 @@ class FusedBitLinear(BitLinear):
             self.norm.bias,
             self.weight,
             self.bias,
-            is_rms_norm=True
+            None,   # Explicitly pass residual=None
+            1e-6,   # eps
+            False,  # prenorm
+            False,  # residual_in_fp32
+            True    # is_rms_norm
         )
