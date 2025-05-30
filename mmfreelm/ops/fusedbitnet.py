@@ -587,13 +587,20 @@ class FusedBitLinear(BitLinear):
     """Fused BitLinear with corrected weight handling"""
     
     def forward(self, x):
-        # Transpose weight for kernel compatibility
-        weight_t = self.weight.t().contiguous()
-        return layer_norm_linear_quant_fn(
+        # Reshape input to 2D tensor if needed
+        original_shape = x.shape
+        if x.dim() > 2:
+            x = x.reshape(-1, x.shape[-1])
+            
+        # Apply fused operation
+        out = layer_norm_linear_quant_fn(
             x,
             self.norm.weight,
             self.norm.bias,
-            weight_t,  # Corrected weight shape
+            self.weight,  # Use original weight (out_features, in_features)
             self.bias,
             is_rms_norm=True
         )
+        
+        # Reshape output to match original dimensions
+        return out.reshape(original_shape[:-1] + (self.weight.shape[0],))
