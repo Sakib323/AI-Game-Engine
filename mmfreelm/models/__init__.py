@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
 from mmfreelm.models.hgrn_bit import HGRNBitConfig, HGRNBitForCausalLM, HGRNBitModel
-from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock
+from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock, DiTBlockSecond
 
 __all__ = [
-    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock',
+    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock','DiTBlockSecond',
 
 ]

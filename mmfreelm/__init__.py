@@ -21,6 +21,7 @@ __all__ = [
     'TerneryDit',
     'TimestepEmbedder',
     'DiTBlock',
+    'DiTBlockSecond',
 ]
 
 __version__ = '0.1'
