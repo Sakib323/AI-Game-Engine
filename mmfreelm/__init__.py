@@ -20,7 +20,7 @@ __all__ = [
     'rotate_half',
     'TerneryDit',
     'TimestepEmbedder',
-    'TimestepEmbedderSecond'
+    'DiTBlock',
 ]
 
 __version__ = '0.1'
