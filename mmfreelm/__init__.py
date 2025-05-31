@@ -22,6 +22,8 @@ __all__ = [
     'TimestepEmbedder',
     'DiTBlock',
     'DiTBlockSecond',
+    'TextEmbedder',
+    'LabelEmbedder',
 ]
 
 __version__ = '0.1'
