@@ -80,10 +80,9 @@ class HGRNBitBlock(nn.Module):
             use_ternary_rope=config.use_ternary_rope
         )
         self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.rms_norm_eps)
-        # Add AdaLNConditioning instances
-        self.attn_adaln = AdaLNConditioning(input_dim=config.condition_dim, hidden_size=config.hidden_size, eps=config.rms_norm_eps)
-        self.mlp_adaln = AdaLNConditioning(input_dim=config.condition_dim, hidden_size=config.hidden_size, eps=config.rms_norm_eps)
 
+
+        # Modified MLP initialization
         if config.moe:
             self.mlp = HGRNBitMoE(config)
         else:
@@ -93,6 +92,7 @@ class HGRNBitBlock(nn.Module):
                 intermediate_size=config.intermediate_size,
                 hidden_act=config.hidden_act
             )
+            
 
     def forward(
         self,
@@ -102,19 +102,10 @@ class HGRNBitBlock(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         lower_bound: Optional[torch.Tensor] = False,
-        condition: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-        if condition is not None:
-            scale, shift = self.attn_adaln(condition)
-            eps = self.attn_norm.eps
-            rms = torch.sqrt(torch.mean(hidden_states ** 2, dim=-1, keepdim=True) + eps)
-            normalized = hidden_states / rms
-            hidden_states = normalized * scale.unsqueeze(1) + shift.unsqueeze(1)
-        else:
-            hidden_states = self.attn_norm(hidden_states)
-        
+        hidden_states = self.attn_norm(hidden_states)
         hidden_states, attentions, past_key_values = self.attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -123,22 +114,12 @@ class HGRNBitBlock(nn.Module):
             output_attentions=output_attentions,
             lower_bound=lower_bound
         )
-        hidden_states = hidden_states + residual
-        residual = hidden_states
-
-        if condition is not None:
-            scale, shift = self.mlp_adaln(condition)
-            eps = self.mlp_norm.eps
-            rms = torch.sqrt(torch.mean(hidden_states ** 2, dim=-1, keepdim=True) + eps)
-            normalized = hidden_states / rms
-            hidden_states = normalized * scale.unsqueeze(1) + shift.unsqueeze(1)
-        else:
-            hidden_states = self.mlp_norm(hidden_states)
-
+        hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states, attentions, past_key_values)
+
         return outputs
 
 
@@ -186,6 +167,7 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
 
 
 class HGRNBitModel(HGRNBitPreTrainedModel):
+
     def __init__(self, config: HGRNBitConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
@@ -196,7 +178,9 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
             self.lower_bounds = nn.Parameter(torch.zeros(config.num_hidden_layers, config.hidden_size))
         self.layers = nn.ModuleList([HGRNBitBlock(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
         self.gradient_checkpointing = False
+
         self.post_init()
 
     def get_input_embeddings(self):
@@ -208,14 +192,13 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,  # noqa
         inputs_embeds: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[List[torch.Tensor]]] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        condition: Optional[torch.Tensor] = None
+        return_dict: Optional[bool] = None
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         if output_attentions:
             warnings.warn("`HGRNBitModel` does not `output_attentions` now, setting it to `False`.")
@@ -225,6 +208,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -270,8 +254,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
                     past_key_values,
                     use_cache,
                     output_attentions,
-                    lower_bound,
-                    condition
+                    lower_bound
                 )
             else:
                 hidden_states, attentions, past_key_values = layer(
@@ -280,8 +263,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
                     past_key_values=past_key_values,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
-                    lower_bound=lower_bound,
-                    condition=condition
+                    lower_bound=lower_bound
                 )
 
             if output_attentions:
@@ -289,6 +271,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
 
         hidden_states = self.norm(hidden_states)
 
+        # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -303,6 +286,8 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
             hidden_states=all_hidden_states,
             attentions=all_attns
         )
+
+
 class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
@@ -432,71 +417,3 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-class AdaLNConditioning(nn.Module):
-    def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.mlp = nn.Sequential(
-            BitLinear(input_dim, hidden_size, bias=False),
-            nn.SiLU(),
-            BitLinear(hidden_size, hidden_size * 2, bias=False)
-        )
-        self.norm = RMSNorm(hidden_size * 2, eps=eps)
-        self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
-
-    def forward(self, condition: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = self.mlp(condition)
-        x = self.norm(x)
-        params = self.out_proj(x)
-        scale, shift = params.chunk(2, dim=-1)
-        return scale, shift
-
-# Define TerneryDit with fixed conditioning
-class TerneryDit(nn.Module):
-    def __init__(self, text_config: HGRNBitConfig, diffusion_config: HGRNBitConfig, 
-                 num_timesteps: int, patch_dim: int):
-        super().__init__()
-        text_config.gradient_checkpointing = True
-        diffusion_config.gradient_checkpointing = True
-        
-        self.text_model = HGRNBitModel(text_config)
-        self.time_embedding = nn.Embedding(num_timesteps, diffusion_config.hidden_size)
-        diffusion_config.rotary_embeddings = True
-        
-        # Add projection layer to match hidden sizes
-        self.proj = BitLinear(patch_dim, diffusion_config.hidden_size, bias=False)
-        
-        self.diffusion_model = HGRNBitModel(diffusion_config)
-        
-        # Adjust conditioning dimension
-        self.cond_proj = AdaLNConditioning(
-            input_dim=text_config.hidden_size + diffusion_config.hidden_size,
-            hidden_size=diffusion_config.hidden_size,
-            eps=diffusion_config.rms_norm_eps
-        )
-        self.noise_head = nn.Linear(diffusion_config.hidden_size, patch_dim)
-
-    def forward(self, patch_embeddings: torch.Tensor, timesteps: torch.LongTensor,
-                input_ids: torch.LongTensor, attention_mask: torch.LongTensor) -> torch.Tensor:
-        # Project patch embeddings to match diffusion hidden size
-        patch_embeddings = self.proj(patch_embeddings)
-        
-        # Get text output and extract last hidden state
-        text_out = self.text_model(input_ids=input_ids, attention_mask=attention_mask)
-        text_feats = text_out.last_hidden_state[:, 0]
-        
-        # Get time embeddings
-        time_emb = self.time_embedding(timesteps)
-        
-        # Combine text + time for conditioning
-        cond = torch.cat([text_feats, time_emb], dim=-1)
-        gamma_beta = self.cond_proj(cond)
-        
-        # Pass conditioning to diffusion model
-        diff_out = self.diffusion_model(
-            inputs_embeds=patch_embeddings,
-            condition=gamma_beta
-        )
-        
-        # Return noise prediction
-        return self.noise_head(diff_out.last_hidden_state)

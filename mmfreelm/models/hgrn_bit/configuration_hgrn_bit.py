@@ -42,7 +42,6 @@ class HGRNBitConfig(PretrainedConfig):
         num_experts: int = 8,
         num_experts_per_tok: int = 2,
         moe_intermediate_size: Optional[int] = None,
-        condition_dim: int = 256,
 
         **kwargs
         
@@ -74,7 +73,7 @@ class HGRNBitConfig(PretrainedConfig):
         self.num_experts = num_experts
         self.num_experts_per_tok = num_experts_per_tok
         self.moe_intermediate_size = moe_intermediate_size or (hidden_size * 4)
-        self.condition_dim = condition_dim
+        # Rest of existing initialization...
 
         super().__init__(
             pad_token_id=pad_token_id,
