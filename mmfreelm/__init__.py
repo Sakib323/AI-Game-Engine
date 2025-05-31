@@ -7,8 +7,9 @@ from mmfreelm.models.hgrn_bit import (
     RotaryEmbedding,
     apply_rotary_pos_emb,
     rotate_half,
-    TerneryDit,
+    ternary_dit,
 )
+
 
 __all__ = [
     'HGRNBitConfig',
@@ -17,7 +18,9 @@ __all__ = [
     'RotaryEmbedding',
     'apply_rotary_pos_emb',
     'rotate_half',
-    'TerneryDit'
+    'TerneryDit',
+    'TimestepEmbedder',
+    'TimestepEmbedderSecond'
 ]
 
 __version__ = '0.1'
