@@ -23,8 +23,7 @@ from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.models.hgrn_bit.configuration_hgrn_bit import HGRNBitConfig
 from mmfreelm.models.utils import RecurrentCache
 from mmfreelm.modules import FusedCrossEntropyLoss, RMSNorm, LayerNorm
-from mmfreelm.modules.activations import swiglu_linear, swiglu
-from mmfreelm.modules.activations import silu
+from mmfreelm.modules.activations import swiglu_linear, swiglu, ACT2FN
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 from mmfreelm.models.hgrn_bit.hgrn_bit_moe import HGRNBitMoE
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
@@ -150,7 +149,7 @@ class DiTBlock(nn.Module):
         self.adaLN_modulation = BitLinear(hidden_size, 6 * hidden_size, bias=True)
 
     def forward(self, x, c):
-        modulated_c = silu(c)
+        modulated_c = ACT2FN['silu'](c)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(
@@ -164,8 +163,6 @@ class DiTBlock(nn.Module):
         x = x + gate_msa.unsqueeze(1) * attn_output
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
-
-
 
 
 
