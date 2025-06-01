@@ -145,6 +145,50 @@ class TextEmbedder(nn.Module):
         # Ensure we have same dimensions
         drop_ids = drop_ids.unsqueeze(-1).expand_as(input_ids)
         return torch.where(drop_ids, self.null_idx, input_ids)
+    def forward(self, texts, train=True, force_drop_ids=None):
+        """
+        Args:
+            texts: List of strings or batched tensor of token IDs.
+            train: Whether to apply dropout (True during training).
+            force_drop_ids: Optional tensor to force dropout for specific samples.
+        Returns:
+            embeddings: Tensor of shape [batch, hidden_size].
+        """
+        # Tokenize texts if input is strings
+        if isinstance(texts, (list, tuple)):
+            
+            tokenized = self.tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt"
+            )
+            input_ids = tokenized["input_ids"].to(self.embedding.weight.device)
+            attention_mask = tokenized["attention_mask"].to(self.embedding.weight.device)
+        else:
+            input_ids = texts
+            attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
+
+        # Apply dropout for classifier-free guidance
+        use_dropout = self.dropout_prob > 0
+        if (train and use_dropout) or (force_drop_ids is not None):
+            input_ids = self.token_drop(input_ids, attention_mask, force_drop_ids)
+
+        # Embed tokens
+        embeddings = self.embedding(input_ids)  # [batch, seq_len, hidden_size]
+
+        # Mean pooling over non-padded tokens
+        attention_mask = attention_mask.unsqueeze(-1)  # [batch, seq_len, 1]
+        sum_embeddings = (embeddings * attention_mask).sum(dim=1)  # [batch, hidden_size]
+        sum_mask = attention_mask.sum(dim=1).clamp(min=1e-9)  # [batch, 1]
+        pooled_embeddings = sum_embeddings / sum_mask  # [batch, hidden_size]
+
+        # Project to final hidden_size
+        final_embeddings = self.mlp(pooled_embeddings)  # [batch, hidden_size]
+
+        return final_embeddings
+
 
 
 
