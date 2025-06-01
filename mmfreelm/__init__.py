@@ -21,9 +21,9 @@ __all__ = [
     'TerneryDit',
     'TimestepEmbedder',
     'DiTBlock',
-    'DiTBlockSecond',
+    'FinalLayer',
     'TextEmbedder',
-    'LabelEmbedder',
+    'FinalLayerSecond',
 ]
 
 __version__ = '0.1'
