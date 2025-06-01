@@ -114,9 +114,6 @@ class TimestepEmbedder(nn.Module):
 
 
 class TextEmbedder(nn.Module):
-    """
-    Embeds full text sentences into vector representations. Supports dropout for classifier-free guidance.
-    """
     def __init__(self, tokenizer_name, hidden_size, dropout_prob, max_length=128):
         super().__init__()
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -127,11 +124,10 @@ class TextEmbedder(nn.Module):
         self.dropout_prob = dropout_prob
         self.max_length = max_length
 
-        # Embedding layer for tokens
+        # CORRECTED: Use standard name 'embedding'
         self.embedding = nn.Embedding(self.vocab_size + 1, hidden_size)  # +1 for null embedding
         self.null_idx = self.vocab_size  # Index for null embedding
 
-        # Projection layer to ensure output matches hidden_size
         self.mlp = HGRNBitMLP(
             hidden_size=hidden_size,
             hidden_ratio=4,
@@ -139,60 +135,16 @@ class TextEmbedder(nn.Module):
             hidden_act='swish'
         )
 
+    # ADD NULL TOKEN HANDLING
     def token_drop(self, input_ids, attention_mask, force_drop_ids=None):
-        """
-        Drops text to enable classifier-free guidance by replacing with null embedding.
-        """
         if force_drop_ids is None:
             drop_ids = torch.rand(input_ids.shape[0], device=input_ids.device) < self.dropout_prob
         else:
             drop_ids = force_drop_ids == 1
-        # Replace input_ids with null_idx where drop_ids is True
-        input_ids = torch.where(drop_ids.unsqueeze(1), self.null_idx, input_ids)
-        return input_ids
-
-    def forward(self, texts, train=True, force_drop_ids=None):
-        """
-        Args:
-            texts: List of strings or batched tensor of token IDs.
-            train: Whether to apply dropout (True during training).
-            force_drop_ids: Optional tensor to force dropout for specific samples.
-        Returns:
-            embeddings: Tensor of shape [batch, hidden_size].
-        """
-        # Tokenize texts if input is strings
-        if isinstance(texts, (list, tuple)):
-            tokenized = self.tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt"
-            )
-            input_ids = tokenized["input_ids"].to(self.embedding.weight.device)
-            attention_mask = tokenized["attention_mask"].to(self.embedding.weight.device)
-        else:
-            input_ids = texts
-            attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
-
-        # Apply dropout for classifier-free guidance
-        use_dropout = self.dropout_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
-            input_ids = self.token_drop(input_ids, attention_mask, force_drop_ids)
-
-        # Embed tokens
-        embeddings = self.embedding(input_ids)  # [batch, seq_len, hidden_size]
-
-        # Mean pooling over non-padded tokens
-        attention_mask = attention_mask.unsqueeze(-1)  # [batch, seq_len, 1]
-        sum_embeddings = (embeddings * attention_mask).sum(dim=1)  # [batch, hidden_size]
-        sum_mask = attention_mask.sum(dim=1).clamp(min=1e-9)  # [batch, 1]
-        pooled_embeddings = sum_embeddings / sum_mask  # [batch, hidden_size]
-
-        # Project to final hidden_size
-        final_embeddings = self.mlp(pooled_embeddings)  # [batch, hidden_size]
-
-        return final_embeddings
+        
+        # Ensure we have same dimensions
+        drop_ids = drop_ids.unsqueeze(-1).expand_as(input_ids)
+        return torch.where(drop_ids, self.null_idx, input_ids)
 
 
 
@@ -375,41 +327,46 @@ class DiT(nn.Module):
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 
-    def initialize_weights(self):
-        # Initialize transformer layers:
-        def _basic_init(module):
-            if isinstance(module, nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
-        self.apply(_basic_init)
+def initialize_weights(self):
+    # Initialize transformer layers:
+    def _basic_init(module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0)
+    self.apply(_basic_init)
 
-        # Initialize (and freeze) pos_embed by sin-cos embedding:
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.x_embedder.num_patches ** 0.5))
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+    # Initialize pos_embed
+    grid_size = int(self.x_embedder.num_patches ** 0.5)
+    pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size)
+    self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
-        # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
-        w = self.x_embedder.proj.weight.data
-        nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-        nn.init.constant_(self.x_embedder.proj.bias, 0)
+    # Initialize patch_embed
+    w = self.x_embedder.proj.weight.data
+    nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+    nn.init.constant_(self.x_embedder.proj.bias, 0)
 
-        # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+    # CORRECTED: Use 'embedding' instead of 'embedding_table'
+    nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
 
-        # Initialize timestep embedding MLP:
-        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+    # CORRECTED: Initialize HGRNBitMLP components
+    nn.init.normal_(self.t_embedder.mlp.gate_proj.weight, std=0.02)
+    nn.init.normal_(self.t_embedder.mlp.down_proj.weight, std=0.02)
 
-        # Zero-out adaLN modulation layers in DiT blocks:
-        for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+    # CORRECTED: Initialize AdaLNConditioning layers
+    for block in self.blocks:
+        nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
+        nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
+        nn.init.constant_(block.adaLN_modulation.out_proj.weight, 0)
+        nn.init.constant_(block.adaLN_modulation.out_proj.bias, 0)
 
-        # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
+    # CORRECTED: Final layer initialization
+    nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
+    nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
+    nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.weight, 0)
+    nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.bias, 0)
+    nn.init.constant_(self.final_layer.linear.weight, 0)
+    nn.init.constant_(self.final_layer.linear.bias, 0)
 
     def unpatchify(self, x):
         """
@@ -418,30 +375,24 @@ class DiT(nn.Module):
         """
         c = self.out_channels
         p = self.x_embedder.patch_size[0]
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
+        num_patches = x.shape[1]
+        h = w = int(math.isqrt(num_patches))
+        assert h * w == num_patches, "Number of patches must be a perfect square"
 
         x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
         x = torch.einsum('nhwpqc->nchpwq', x)
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
-
+    
     def forward(self, x, t, y):
-        """
-        Forward pass of DiT.
-        x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-        t: (N,) tensor of diffusion timesteps
-        y: (N,) tensor of class labels
-        """
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
-        t = self.t_embedder(t)                   # (N, D)
-        y = self.y_embedder(y, self.training)    # (N, D)
-        c = t + y                                # (N, D)
-        for block in self.blocks:
-            x = block(x, c)                      # (N, T, D)
-        x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
-        x = self.unpatchify(x)                   # (N, out_channels, H, W)
-        return x
+            x = self.x_embedder(x) + self.pos_embed
+            t = self.t_embedder(t)
+            y_emb = self.y_embedder(y, train=self.training)
+            c = t + y_emb
+            for block in self.blocks:
+                x = block(x, c)
+                x = self.final_layer(x, c)
+                return self.unpatchify(x)
 
     def forward_with_cfg(self, x, t, y, cfg_scale):
         """
