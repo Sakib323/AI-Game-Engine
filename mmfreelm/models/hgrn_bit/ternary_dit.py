@@ -196,65 +196,51 @@ class TextEmbedder(nn.Module):
 
 
 
-class LabelEmbedder(nn.Module):
-    """
-    Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
-    """
-    def __init__(self, num_classes, hidden_size, dropout_prob):
-        super().__init__()
-        use_cfg_embedding = dropout_prob > 0
-        self.embedding_table = nn.Embedding(num_classes + use_cfg_embedding, hidden_size)
-        self.num_classes = num_classes
-        self.dropout_prob = dropout_prob
-
-    def token_drop(self, labels, force_drop_ids=None):
-        """
-        Drops labels to enable classifier-free guidance.
-        """
-        if force_drop_ids is None:
-            drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
-        else:
-            drop_ids = force_drop_ids == 1
-        labels = torch.where(drop_ids, self.num_classes, labels)
-        return labels
-
-    def forward(self, labels, train, force_drop_ids=None):
-        use_dropout = self.dropout_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
-            labels = self.token_drop(labels, force_drop_ids)
-        embeddings = self.embedding_table(labels)
-        return embeddings
-
-
-
 #################################################################################
 #                                 Core DiT Model                                #
 #################################################################################
 
 class AdaLNConditioning(nn.Module):
-    def __init__(self, input_dim: int, hidden_size: int, eps: float = 1e-6):
+    def __init__(
+        self, 
+        input_dim: int, 
+        hidden_size: int, 
+        output_dim: int,  # New output dimension parameter
+        eps: float = 1e-6,
+        hidden_ratio: Optional[int] = None,
+        intermediate_size: Optional[int] = None,
+        hidden_act: str = 'swish'
+    ):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.mlp = nn.Sequential(
-            BitLinear(input_dim, hidden_size, bias=False),
-            nn.SiLU(),
-            BitLinear(hidden_size, hidden_size * 2, bias=False)
+        # Project input to hidden_size
+        self.input_proj = BitLinear(input_dim, hidden_size, bias=False)
+        
+        # HGRN-based MLP processing
+        self.hgrn_mlp = HGRNBitMLP(
+            hidden_size=hidden_size,
+            hidden_ratio=hidden_ratio,
+            intermediate_size=intermediate_size,
+            hidden_act=hidden_act
         )
-        self.norm = RMSNorm(hidden_size * 2, eps=eps)
-        self.out_proj = BitLinear(hidden_size * 2, hidden_size * 2, bias=False)
+        
+        # Final output projection
+        self.output_proj = BitLinear(hidden_size, output_dim, bias=True)  # Maintain original bias
+        
+        # Normalization and output layers
+        self.norm = RMSNorm(output_dim, eps=eps)
+        self.out_proj = BitLinear(output_dim, output_dim, bias=True)  # Maintain original bias
 
-    def forward(self, condition: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = self.mlp(condition)
+    def forward(self, condition: torch.Tensor) -> torch.Tensor:
+        x = self.input_proj(condition)
+        x = self.hgrn_mlp(x)
+        x = self.output_proj(x)
         x = self.norm(x)
-        params = self.out_proj(x)
-        scale, shift = params.chunk(2, dim=-1)
-        return scale, shift
-
+        return self.out_proj(x)
 
 
 class DiTBlock(nn.Module):
     """
-    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning, modified with custom modules.
+    A DiT block with enhanced adaptive layer norm conditioning using HGRN-based modulation
     """
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
         super().__init__()
@@ -277,11 +263,25 @@ class DiTBlock(nn.Module):
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=mlp_hidden_dim, hidden_act='swish')
-        self.adaLN_modulation = BitLinear(hidden_size, 6 * hidden_size, bias=True)
+        
+        # Replace simple linear with enhanced conditioning network
+        self.adaLN_modulation = AdaLNConditioning(
+            input_dim=hidden_size,
+            hidden_size=hidden_size,      # Same hidden size as block
+            output_dim=6 * hidden_size,   # Produces 6 modulation parameters
+            eps=1e-6,
+            hidden_ratio=mlp_ratio,       # Use same ratio as main MLP
+            hidden_act='swish'
+        )
 
     def forward(self, x, c):
+        # Process conditioning vector
         modulated_c = ACT2FN['silu'](c)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
+        # Get 6 modulation parameters
+        params = self.adaLN_modulation(modulated_c)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = params.chunk(6, dim=1)
+        
+        # Attention path
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(
             modulated_x,
@@ -292,10 +292,12 @@ class DiTBlock(nn.Module):
             lower_bound=None
         )
         x = x + gate_msa.unsqueeze(1) * attn_output
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+        
+        # MLP path
+        mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(mlp_input)
+        
         return x
-
-
 
 class DiTBlockSecond(nn.Module):
     """
@@ -366,8 +368,7 @@ class FinalLayerSecond(nn.Module):
 #################################################################################
 #                                 TerDiT                                        #
 #################################################################################
-    
-    
+        
 class DiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
@@ -381,8 +382,8 @@ class DiT(nn.Module):
         depth=28,
         num_heads=16,
         mlp_ratio=4.0,
-        class_dropout_prob=0.1,
-        num_classes=1000,
+        dropout_prob=0.1,
+        tokenizer_name = "Sakib323/MMfreeLM-370M",
         learn_sigma=True,
     ):
         super().__init__()
@@ -394,7 +395,7 @@ class DiT(nn.Module):
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        self.y_embedder = TextEmbedder(tokenizer_name, hidden_size, dropout_prob)
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
@@ -548,7 +549,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 
 #################################################################################
-#                                   DiT Configs                                  #
+#                                   DiT Configs                                 #
 #################################################################################
 
 def DiT_XL_2(**kwargs):
