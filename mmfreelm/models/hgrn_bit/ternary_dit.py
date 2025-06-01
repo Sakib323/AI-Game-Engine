@@ -326,47 +326,37 @@ class DiT(nn.Module):
         ])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
-
-def initialize_weights(self):
-    # Initialize transformer layers:
-    def _basic_init(module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.xavier_uniform_(module.weight)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0)
-    self.apply(_basic_init)
-
-    # Initialize pos_embed
-    grid_size = int(self.x_embedder.num_patches ** 0.5)
-    pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size)
-    self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-
-    # Initialize patch_embed
-    w = self.x_embedder.proj.weight.data
-    nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-    nn.init.constant_(self.x_embedder.proj.bias, 0)
-
-    # CORRECTED: Use 'embedding' instead of 'embedding_table'
-    nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
-
-    # CORRECTED: Initialize HGRNBitMLP components
-    nn.init.normal_(self.t_embedder.mlp.gate_proj.weight, std=0.02)
-    nn.init.normal_(self.t_embedder.mlp.down_proj.weight, std=0.02)
-
-    # CORRECTED: Initialize AdaLNConditioning layers
-    for block in self.blocks:
-        nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
-        nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
-        nn.init.constant_(block.adaLN_modulation.out_proj.weight, 0)
-        nn.init.constant_(block.adaLN_modulation.out_proj.bias, 0)
-
-    # CORRECTED: Final layer initialization
-    nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
-    nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
-    nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.weight, 0)
-    nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.bias, 0)
-    nn.init.constant_(self.final_layer.linear.weight, 0)
-    nn.init.constant_(self.final_layer.linear.bias, 0)
+        
+    def initialize_weights(self):
+            def _basic_init(module):
+                if isinstance(module, nn.Linear):
+                    torch.nn.init.xavier_uniform_(module.weight)
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0)
+            self.apply(_basic_init)
+            
+            grid_size = int(self.x_embedder.num_patches ** 0.5)
+            pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size)
+            self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+            w = self.x_embedder.proj.weight.data
+            nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+            nn.init.constant_(self.x_embedder.proj.bias, 0)
+            nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
+            nn.init.normal_(self.t_embedder.mlp.gate_proj.weight, std=0.02)
+            nn.init.normal_(self.t_embedder.mlp.down_proj.weight, std=0.02)
+            for block in self.blocks:
+                nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
+                nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
+                nn.init.constant_(block.adaLN_modulation.out_proj.weight, 0)
+                nn.init.constant_(block.adaLN_modulation.out_proj.bias, 0)
+            
+            nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
+            nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
+            nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.weight, 0)
+            nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.bias, 0)
+            nn.init.constant_(self.final_layer.linear.weight, 0)
+            nn.init.constant_(self.final_layer.linear.bias, 0)
+    
 
     def unpatchify(self, x):
         """
