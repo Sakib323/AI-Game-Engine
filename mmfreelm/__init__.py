@@ -8,6 +8,7 @@ from mmfreelm.models.hgrn_bit import (
     apply_rotary_pos_emb,
     rotate_half,
     ternary_dit,
+    mesh_dit,
 )
 
 
@@ -24,6 +25,7 @@ __all__ = [
     'FinalLayer',
     'TextEmbedder',
     'FinalLayerSecond',
+    'DiT_models',
     'DiT_models',
 ]
 
