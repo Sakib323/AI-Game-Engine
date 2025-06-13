@@ -2,7 +2,7 @@
 
 from mmfreelm.models.hgrn_bit import HGRNBitConfig, HGRNBitForCausalLM, HGRNBitModel
 from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock, TextEmbedder, FinalLayer, DiT_models
-from mmfreelm.models.hgrn_bit.mesh_dit import TimestepEmbedder, DiTBlock, TextEmbedder, FinalLayer, MeshDiT_models
+from mmfreelm.models.hgrn_bit.mesh_dit import TimestepEmbedder, TextEmbedder, FinalLayer, MeshDiT_models
 
 
 __all__ = [

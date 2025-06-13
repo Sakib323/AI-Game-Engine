@@ -259,7 +259,7 @@ class MeshDiT(nn.Module):
         mlp_ratio: float = 4.0,
         dropout_prob: float = 0.1,
         # --- RoPE configuration flags ---
-        use_rope: bool = False,
+        use_rope: bool = True,
         use_ternary_rope: bool = False,
     ):
         super().__init__()
