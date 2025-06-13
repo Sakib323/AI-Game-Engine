@@ -26,7 +26,7 @@ __all__ = [
     'TextEmbedder',
     'FinalLayerSecond',
     'DiT_models',
-    'DiT_models',
+    'MeshDiT_models',
 ]
 
 __version__ = '0.1'
