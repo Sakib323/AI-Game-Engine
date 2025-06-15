@@ -15,9 +15,7 @@ from transformers.utils import logging
 # We don't need to import or use RotaryEmbedding directly in this file.
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
-# *** FINAL FIX HERE: Use the simpler, more stable BitLinear to avoid Triton/DataParallel incompatibility ***
-from mmfreelm.ops.bitnet import BitLinear
-
+from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
 logger = logging.get_logger(__name__)
 
@@ -91,8 +89,6 @@ class TimestepEmbedder(nn.Module):
 
     def forward(self, t):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        # Cast the float32 `t_freq` tensor to the same dtype as the MLP's weights
-        # before passing it to the MLP. This resolves the mixed-precision error.
         t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
         return t_emb
 
@@ -192,6 +188,7 @@ class MeshDiTBlock(nn.Module):
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        # We pass the RoPE flags here. HGRNBitAttention will handle the rest.
         self.attn = HGRNBitAttention(
             mode='fused_recurrent', 
             hidden_size=hidden_size, 
@@ -210,6 +207,7 @@ class MeshDiTBlock(nn.Module):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
         
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
+        # The `attn` layer applies RoPE internally before its recurrence calculation.
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
         
@@ -245,17 +243,22 @@ class MeshDiT(nn.Module):
     """ 
     def __init__(
         self,
+        # Mesh Latent parameters
         input_tokens: int = 2048,
         input_dim: int = 768,
+        # Text conditioning parameters
         vocab_size: int = 49408,
+        # Image conditioning parameters
         image_latent_channels: int = 4,
         image_latent_height: int = 64,
         image_latent_width: int = 64,
+        # Model architecture parameters
         hidden_size: int = 1152,
         depth: int = 28,
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         dropout_prob: float = 0.1,
+        # --- RoPE configuration flags ---
         use_rope: bool = True,
         use_ternary_rope: bool = False,
     ):
@@ -272,13 +275,18 @@ class MeshDiT(nn.Module):
         image_latent_dim = image_latent_channels * image_latent_height * image_latent_width
         self.image_embedder = ImageLatentEmbedder(image_latent_dim, hidden_size, dropout_prob)
         
+        # --- Conditional Positional Embedding Strategy ---
         if not self.use_rope:
+            # If RoPE is off, use standard learnable absolute positional embeddings.
             self.pos_embed = nn.Parameter(torch.zeros(1, input_tokens, hidden_size))
             logger.info("Using learnable absolute positional embeddings.")
         else:
+            # If RoPE is on, we don't need absolute embeddings.
+            # The HGRNBitAttention layer will handle rotary embeddings internally.
             self.pos_embed = None
             logger.info("Using Rotary Positional Embeddings (RoPE) within attention blocks.")
 
+        # Pass RoPE configuration down to each transformer block.
         self.blocks = nn.ModuleList([
             MeshDiTBlock(
                 hidden_size, 
@@ -294,6 +302,7 @@ class MeshDiT(nn.Module):
         self.initialize_weights()
         
     def initialize_weights(self):
+        """Initializes weights for all sub-modules."""
         def _basic_init(module):
             if isinstance(module, (nn.Linear, BitLinear)):
                 torch.nn.init.xavier_uniform_(module.weight)
@@ -301,6 +310,7 @@ class MeshDiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
         
+        # Initialize absolute positional embeddings only if they exist.
         if self.pos_embed is not None:
             nn.init.normal_(self.pos_embed, std=0.02)
 
@@ -320,7 +330,11 @@ class MeshDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.bias, 0)
     
     def forward(self, x, t, y):
+        """
+        Forward pass for the MeshDiT model.
+        """
         x = self.x_embedder(x)
+        # Add absolute positional embeddings only if RoPE is not being used.
         if self.pos_embed is not None:
             x = x + self.pos_embed
         
@@ -337,6 +351,9 @@ class MeshDiT(nn.Module):
         return x
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, cfg_scale_image):
+        """
+        Forward pass with Classifier-Free Guidance.
+        """
         half = x.shape[0] // 2
         combined_x = torch.cat([x[:half], x[:half], x[:half], x[:half]], dim=0)
         combined_t = torch.cat([t[:half], t[:half], t[:half], t[:half]], dim=0)
@@ -363,6 +380,7 @@ class MeshDiT(nn.Module):
         c_combined = t_emb + y_emb + img_emb
         
         x_combined = self.x_embedder(combined_x)
+        # Apply absolute positional embeddings conditionally for CFG.
         if self.pos_embed is not None:
             x_combined = x_combined + self.pos_embed.repeat(4, 1, 1)
 
