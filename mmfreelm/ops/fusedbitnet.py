@@ -500,13 +500,10 @@ class LayerNormLinearQuantFn(torch.autograd.Function):
             dx.reshape(ctx.x_shape_og),
             dnorm_weight,
             dnorm_bias,
-            dlinear_weight,
+            dlinear_weight.to(torch.float32),
             dlinear_bias,
             dresidual_in.reshape(ctx.x_shape_og) if ctx.has_residual else None,
-            None,
-            None,
-            None,
-            None,
+            None, None, None, None,
         )
 
 
