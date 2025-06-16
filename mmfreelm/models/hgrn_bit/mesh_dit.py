@@ -268,7 +268,10 @@ class MeshDiT(nn.Module):
         self.num_heads = num_heads
         self.use_rope = use_rope
 
-        self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
+        self.x_embedder = nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, hidden_size, bias=True)
+        )
         
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
