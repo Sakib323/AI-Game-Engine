@@ -245,7 +245,7 @@ class MeshDiT(nn.Module):
         self,
         # Mesh Latent parameters
         input_tokens: int = 2048,
-        input_dim: int = 64,
+        input_dim: int = 768,
         # Text conditioning parameters
         vocab_size: int = 49408,
         # Image conditioning parameters
