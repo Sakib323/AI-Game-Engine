@@ -164,8 +164,9 @@ def _layer_norm_fwd_quant(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
     # heuristics for number of warps
     with torch.cuda.device(x.device.index):
-        # FIX: Explicitly set num_warps to bypass Triton autotuner bug with DataParallel.
-        _layer_norm_fwd_quant_kernel[(M,)](
+        # FIX: Call the kernel's .fn attribute to bypass the autotuner completely.
+        grid = (M,)
+        _layer_norm_fwd_quant_kernel.fn[grid](
             x,
             y,
             weight,
@@ -180,12 +181,12 @@ def _layer_norm_fwd_quant(
             residual_out.stride(0) if residual_out is not None else 0,
             N,
             eps,
-            is_rms_norm,
-            BLOCK_N,
-            residual is not None,
-            residual_out is not None,
-            weight is not None,
-            bias is not None,
+            IS_RMS_NORM=is_rms_norm,
+            BLOCK_N=BLOCK_N,
+            HAS_RESIDUAL=(residual is not None),
+            STORE_RESIDUAL_OUT=(residual_out is not None),
+            HAS_WEIGHT=(weight is not None),
+            HAS_BIAS=(bias is not None),
             num_warps=4,
         )
     # residual_out is None if residual is None and residual_dtype == input_dtype
@@ -377,8 +378,8 @@ def _layer_norm_bwd(
     rows_per_program = math.ceil(M / sm_count)
     grid = (sm_count,)
     with torch.cuda.device(x.device.index):
-        # FIX: Explicitly set num_warps to bypass Triton autotuner bug with DataParallel.
-        _layer_norm_bwd_kernel[grid](
+        # FIX: Call the kernel's .fn attribute to bypass the autotuner completely.
+        _layer_norm_bwd_kernel.fn[grid](
             x,
             weight,
             bias,
@@ -401,12 +402,13 @@ def _layer_norm_bwd(
             N,
             eps,
             rows_per_program,
-            is_rms_norm,
-            BLOCK_N,
-            dresidual is not None,
-            dresidual_in is not None,
-            weight is not None,
-            bias is not None,
+            IS_RMS_NORM=is_rms_norm,
+            BLOCK_N=BLOCK_N,
+            HAS_DRESIDUAL=(dresidual is not None),
+            STORE_DRESIDUAL=(dresidual_in is not None),
+            HAS_WEIGHT=(weight is not None),
+            HAS_BIAS=(bias is not None),
+            RECOMPUTE_OUTPUT=recompute_output,
             num_warps=4,
         )
     dw = _dw.sum(0).to(weight.dtype) if weight is not None else None
@@ -590,6 +592,7 @@ class FusedBitLinear(BitLinear):
     A custom linear layer that applies quantization on both activations and weights.
     This is primarily for training; kernel optimization is needed for efficiency in deployment.
     """
+
 
     def __init__(self, in_features, out_features, bias=False):
         """
