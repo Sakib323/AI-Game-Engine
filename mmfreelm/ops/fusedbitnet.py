@@ -164,9 +164,7 @@ def _layer_norm_fwd_quant(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
     # heuristics for number of warps
     with torch.cuda.device(x.device.index):
-        # FIX: Call the kernel's .fn attribute to bypass the autotuner completely.
-        grid = (M,)
-        _layer_norm_fwd_quant_kernel.fn[grid](
+        _layer_norm_fwd_quant_kernel[(M,)](
             x,
             y,
             weight,
@@ -181,13 +179,12 @@ def _layer_norm_fwd_quant(
             residual_out.stride(0) if residual_out is not None else 0,
             N,
             eps,
-            IS_RMS_NORM=is_rms_norm,
-            BLOCK_N=BLOCK_N,
-            HAS_RESIDUAL=(residual is not None),
-            STORE_RESIDUAL_OUT=(residual_out is not None),
-            HAS_WEIGHT=(weight is not None),
-            HAS_BIAS=(bias is not None),
-            num_warps=4,
+            is_rms_norm,
+            BLOCK_N,
+            residual is not None,
+            residual_out is not None,
+            weight is not None,
+            bias is not None,
         )
     # residual_out is None if residual is None and residual_dtype == input_dtype
     return y, mean, rstd, residual_out if residual_out is not None else x
@@ -378,8 +375,7 @@ def _layer_norm_bwd(
     rows_per_program = math.ceil(M / sm_count)
     grid = (sm_count,)
     with torch.cuda.device(x.device.index):
-        # FIX: Call the kernel's .fn attribute to bypass the autotuner completely.
-        _layer_norm_bwd_kernel.fn[grid](
+        _layer_norm_bwd_kernel[grid](
             x,
             weight,
             bias,
@@ -402,14 +398,12 @@ def _layer_norm_bwd(
             N,
             eps,
             rows_per_program,
-            IS_RMS_NORM=is_rms_norm,
-            BLOCK_N=BLOCK_N,
-            HAS_DRESIDUAL=(dresidual is not None),
-            STORE_DRESIDUAL=(dresidual_in is not None),
-            HAS_WEIGHT=(weight is not None),
-            HAS_BIAS=(bias is not None),
-            RECOMPUTE_OUTPUT=recompute_output,
-            num_warps=4,
+            is_rms_norm,
+            BLOCK_N,
+            dresidual is not None,
+            dresidual_in is not None,
+            weight is not None,
+            bias is not None,
         )
     dw = _dw.sum(0).to(weight.dtype) if weight is not None else None
     db = _db.sum(0).to(bias.dtype) if bias is not None else None
@@ -593,7 +587,6 @@ class FusedBitLinear(BitLinear):
     This is primarily for training; kernel optimization is needed for efficiency in deployment.
     """
 
-
     def __init__(self, in_features, out_features, bias=False):
         """
         Initializes the BitLinear layer.
@@ -610,7 +603,7 @@ class FusedBitLinear(BitLinear):
         return layer_norm_linear_quant_fn(
             x,
             self.norm.weight,
-            None, # Bias is not used in RMSNorm
+            self.norm.bias,
             self.weight,
             self.bias,
             is_rms_norm=True
