@@ -164,6 +164,7 @@ def _layer_norm_fwd_quant(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
     # heuristics for number of warps
     with torch.cuda.device(x.device.index):
+        # FIX: Explicitly set num_warps to bypass Triton autotuner bug with DataParallel.
         _layer_norm_fwd_quant_kernel[(M,)](
             x,
             y,
@@ -185,6 +186,7 @@ def _layer_norm_fwd_quant(
             residual_out is not None,
             weight is not None,
             bias is not None,
+            num_warps=4,
         )
     # residual_out is None if residual is None and residual_dtype == input_dtype
     return y, mean, rstd, residual_out if residual_out is not None else x
@@ -375,6 +377,7 @@ def _layer_norm_bwd(
     rows_per_program = math.ceil(M / sm_count)
     grid = (sm_count,)
     with torch.cuda.device(x.device.index):
+        # FIX: Explicitly set num_warps to bypass Triton autotuner bug with DataParallel.
         _layer_norm_bwd_kernel[grid](
             x,
             weight,
@@ -404,6 +407,7 @@ def _layer_norm_bwd(
             dresidual_in is not None,
             weight is not None,
             bias is not None,
+            num_warps=4,
         )
     dw = _dw.sum(0).to(weight.dtype) if weight is not None else None
     db = _db.sum(0).to(bias.dtype) if bias is not None else None
@@ -603,7 +607,7 @@ class FusedBitLinear(BitLinear):
         return layer_norm_linear_quant_fn(
             x,
             self.norm.weight,
-            self.norm.bias,
+            None, # Bias is not used in RMSNorm
             self.weight,
             self.bias,
             is_rms_norm=True
