@@ -190,9 +190,9 @@ class MeshDiTBlock(nn.Module):
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         # We pass the RoPE flags here. HGRNBitAttention will handle the rest.
         self.attn = HGRNBitAttention(
-            mode='fused_recurrent', 
-            hidden_size=hidden_size, 
-            num_heads=num_heads, 
+            mode='fused_recurrent',
+            hidden_size=hidden_size,
+            num_heads=num_heads,
             rotary_embeddings=use_rope,
             use_ternary_rope=use_ternary_rope,
             **block_kwargs
@@ -200,20 +200,25 @@ class MeshDiTBlock(nn.Module):
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=mlp_hidden_dim, hidden_act='swish')
+        
+        self.norm3 = RMSNorm(hidden_size, eps=1e-6)
+        
         self.adaLN_modulation = AdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
-        
+
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
-        # The `attn` layer applies RoPE internally before its recurrence calculation.
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
-        
+
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(mlp_input)
+        
+        mlp_output = self.norm3(self.mlp(mlp_input))
+        x = x + gate_mlp.unsqueeze(1) * mlp_output
         return x
+
 
 
 class FinalLayer(nn.Module):
