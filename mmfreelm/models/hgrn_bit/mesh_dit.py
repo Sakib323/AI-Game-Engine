@@ -166,11 +166,11 @@ class AdaLNConditioning(nn.Module):
         hidden_ratio: Optional[int] = None
     ):
         super().__init__()
-        self.input_proj = BitLinear(input_dim, hidden_size, bias=False)
+        self.input_proj = nn.Linear(input_dim, hidden_size, bias=False)
         self.hgrn_mlp = HGRNBitMLP(hidden_size=hidden_size, hidden_ratio=hidden_ratio, hidden_act='swish')
-        self.output_proj = BitLinear(hidden_size, output_dim, bias=True)
+        self.output_proj = nn.Linear(hidden_size, output_dim, bias=True)
         self.norm = RMSNorm(output_dim, eps=eps)
-        self.out_proj = BitLinear(output_dim, output_dim, bias=True)
+        self.out_proj = nn.Linear(output_dim, output_dim, bias=True)
 
     def forward(self, condition: torch.Tensor) -> torch.Tensor:
         x = self.input_proj(condition)
