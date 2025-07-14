@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# Adapted for 3D Mesh Latent Generation with optional Rotary Embeddings
+# Adapted for 3D Mesh Latent Generation.
+# This version explicitly removes absolute positional embeddings.
 
 from __future__ import annotations
 
@@ -12,7 +13,6 @@ from transformers.activations import ACT2FN
 from transformers.utils import logging
 
 # The HGRNBitAttention class handles the RoPE implementation internally.
-# We don't need to import or use RotaryEmbedding directly in this file.
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
@@ -188,7 +188,6 @@ class MeshDiTBlock(nn.Module):
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # We pass the RoPE flags here. HGRNBitAttention will handle the rest.
         self.attn = HGRNBitAttention(
             mode='fused_recurrent',
             hidden_size=hidden_size,
@@ -243,8 +242,8 @@ class FinalLayer(nn.Module):
         
 class MeshDiT(nn.Module):
     """
-    Diffusion model with a Transformer backbone for 3D Mesh Generation, 
-    configurable to use either absolute positional embeddings or RoPE.
+    Diffusion model with a Transformer backbone for 3D Mesh Generation.
+    This version does NOT use absolute positional embeddings.
     """ 
     def __init__(
         self,
@@ -271,7 +270,6 @@ class MeshDiT(nn.Module):
         self.input_dim = input_dim
         self.output_dim = input_dim
         self.num_heads = num_heads
-        self.use_rope = use_rope
 
         self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
         
@@ -280,18 +278,12 @@ class MeshDiT(nn.Module):
         image_latent_dim = image_latent_channels * image_latent_height * image_latent_width
         self.image_embedder = ImageLatentEmbedder(image_latent_dim, hidden_size, dropout_prob)
         
-        # --- Conditional Positional Embedding Strategy ---
-        if not self.use_rope:
-            # If RoPE is off, use standard learnable absolute positional embeddings.
-            self.pos_embed = nn.Parameter(torch.zeros(1, input_tokens, hidden_size))
-            logger.info("Using learnable absolute positional embeddings.")
-            print("Using learnable absolute positional embeddings.")
-        else:
-            # If RoPE is on, we don't need absolute embeddings.
-            # The HGRNBitAttention layer will handle rotary embeddings internally.
-            self.pos_embed = None
-            logger.info("Using Rotary Positional Embeddings (RoPE) within attention blocks.")
-            print("Using Rotary Positional Embeddings (RoPE) within attention blocks.")
+        # --- Positional Embeddings Removed ---
+        # Absolute positional embeddings are not used because the input is an unordered set of latent vectors.
+        # The `pos_embed` parameter is intentionally removed from this model.
+        self.pos_embed = None
+        logger.info("Absolute positional embeddings are disabled for this model.")
+        print("Absolute positional embeddings are disabled for this model.")
 
         # Pass RoPE configuration down to each transformer block.
         self.blocks = nn.ModuleList([
@@ -317,9 +309,7 @@ class MeshDiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
         
-        # Initialize absolute positional embeddings only if they exist.
-        if self.pos_embed is not None:
-            nn.init.normal_(self.pos_embed, std=0.02)
+        # No initialization for pos_embed as it has been removed.
 
         nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
         
@@ -341,9 +331,7 @@ class MeshDiT(nn.Module):
         Forward pass for the MeshDiT model.
         """
         x = self.x_embedder(x)
-        # Add absolute positional embeddings only if RoPE is not being used.
-        if self.pos_embed is not None:
-            x = x + self.pos_embed
+        # Note: Absolute positional embeddings have been removed and are not added here.
         
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
@@ -387,9 +375,7 @@ class MeshDiT(nn.Module):
         c_combined = t_emb + y_emb + img_emb
         
         x_combined = self.x_embedder(combined_x)
-        # Apply absolute positional embeddings conditionally for CFG.
-        if self.pos_embed is not None:
-            x_combined = x_combined + self.pos_embed.repeat(4, 1, 1)
+        # Note: Absolute positional embeddings have been removed and are not added here.
 
         for block in self.blocks:
             x_combined = block(x_combined, c_combined)
