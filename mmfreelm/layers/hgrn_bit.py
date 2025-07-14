@@ -14,11 +14,13 @@ from transformers.cache_utils import Cache
 from mmfreelm.modules import FusedRMSNormSwishGate, ShortConvolution
 from mmfreelm.modules.activations import swiglu
 from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
-from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
+
 #from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
+
 class HGRNBitAttention(nn.Module):
+
     def __init__(
         self,
         mode: str = 'fused_recurrent',
@@ -30,14 +32,9 @@ class HGRNBitAttention(nn.Module):
         conv_bias: bool = False,
         share_conv_kernel: bool = True,
         layernorm_eps: float = 1e-5,
-        layer_idx: int = None,
-        rotary_embeddings: bool = False, 
-        rope_theta: float = 10000.0,
-        use_ternary_rope: bool = False,
+        layer_idx: int = None
     ) -> HGRNAttention:
         super().__init__()
-        if rotary_embeddings:
-            print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
 
         self.mode = mode
         self.hidden_size = hidden_size
@@ -71,15 +68,6 @@ class HGRNBitAttention(nn.Module):
 
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
         self.o_proj = BitLinear(self.input_dim, hidden_size, bias=False)
-
-        self.rotary_embeddings = rotary_embeddings
-        if self.rotary_embeddings:
-            self.rotary_emb = RotaryEmbedding(
-                dim=self.head_dim,
-                max_position_embeddings=2048,
-                base=rope_theta,
-                use_ternary=use_ternary_rope
-            )
 
         self.apply(self._initialize_weights)
 
@@ -130,15 +118,7 @@ class HGRNBitAttention(nn.Module):
         # dealing with left-padding
         if attention_mask is not None:
             i = i.mul_(attention_mask.unsqueeze(-1))
-            
-        # Reshape for rotary embeddings
-        i = rearrange(i, 'b l (h d) -> b h l d', h=self.num_heads)
-        f = rearrange(f, 'b l (h d) -> b h l d', h=self.num_heads)
-        
-        if self.rotary_embeddings:
-            seq_len = i.shape[2]
-            cos, sin = self.rotary_emb(i, seq_len=seq_len)
-            i, f = apply_rotary_pos_emb(i, f, cos, sin)
+        i, f = map(lambda x: rearrange(x, 'b l (h d) -> b h l d', h=self.num_heads), (i, f))
 
         recurrent_state = last_state[-1] if use_cache else None
         if mode == 'fused_recurrent':
@@ -156,8 +136,7 @@ class HGRNBitAttention(nn.Module):
                 last_state = (recurrent_state,)
             past_key_values.update(last_state, self.layer_idx, i.shape[2])
 
-        o = rearrange(o, 'b h l d -> b l (h d)')
-        o = self.g_norm(self.g_proj(hidden_states), o)
+        o = self.g_norm(self.g_proj(hidden_states), rearrange(o, 'b h l d -> b l (h d)'))
         o = self.o_proj(o)
 
         return o, None, past_key_values
