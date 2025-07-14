@@ -285,11 +285,13 @@ class MeshDiT(nn.Module):
             # If RoPE is off, use standard learnable absolute positional embeddings.
             self.pos_embed = nn.Parameter(torch.zeros(1, input_tokens, hidden_size))
             logger.info("Using learnable absolute positional embeddings.")
+            print("Using learnable absolute positional embeddings.")
         else:
             # If RoPE is on, we don't need absolute embeddings.
             # The HGRNBitAttention layer will handle rotary embeddings internally.
             self.pos_embed = None
             logger.info("Using Rotary Positional Embeddings (RoPE) within attention blocks.")
+            print("Using Rotary Positional Embeddings (RoPE) within attention blocks.")
 
         # Pass RoPE configuration down to each transformer block.
         self.blocks = nn.ModuleList([
