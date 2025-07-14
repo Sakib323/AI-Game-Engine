@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Adapted for 3D Mesh Latent Generation.
 # This version explicitly removes absolute positional embeddings.
+# Modified to use full-precision layers for conditioning as requested.
 
 from __future__ import annotations
 
@@ -57,6 +58,40 @@ class HGRNBitMLP(nn.Module):
         z = self.down_proj(self.act_fn(gate) * y)
         return z
 
+# --- ADDED: Full-precision MLP for conditioning ---
+class FullPrecisionMLP(nn.Module):
+    """
+    A standard MLP block using full-precision linear layers for conditioning.
+    """
+    def __init__(
+        self,
+        hidden_size: int,
+        hidden_ratio: Optional[int] = None,
+        intermediate_size: Optional[int] = None,
+        hidden_act: str = 'swish'
+    ):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        if hidden_ratio is None:
+            hidden_ratio = 4
+        if intermediate_size is None:
+            intermediate_size = int(hidden_size * hidden_ratio * 2 / 3)
+            intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
+
+        # Use nn.Linear for full precision
+        self.gate_proj = nn.Linear(self.hidden_size, intermediate_size * 2, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, self.hidden_size, bias=False)
+        self.act_fn = ACT2FN[hidden_act]
+
+    def forward(self, x):
+        y = self.gate_proj(x)
+        gate, y = y.chunk(2, -1)
+        z = self.down_proj(self.act_fn(gate) * y)
+        return z
+# --- END ADDED SECTION ---
+
+
 #################################################################################
 #               Embedding Layers for Timesteps, Text, and Image                 #
 #################################################################################
@@ -102,7 +137,9 @@ class TextEmbedder(nn.Module):
         self.embedding = nn.Embedding(vocab_size + 1, hidden_size)
         self.null_idx = vocab_size
         self.dropout_prob = dropout_prob
-        self.mlp = HGRNBitMLP(hidden_size, 4, hidden_act='swish')
+        # --- MODIFIED: Use FullPrecisionMLP for conditioning ---
+        self.mlp = FullPrecisionMLP(hidden_size, 4, hidden_act='swish')
+        # --- END MODIFIED SECTION ---
 
     def token_drop(self, input_ids, force_drop_ids=None):
         if force_drop_ids is None:
@@ -179,6 +216,39 @@ class AdaLNConditioning(nn.Module):
         x = self.norm(x)
         return self.out_proj(x)
 
+# --- ADDED: Full-precision AdaLN Conditioning ---
+class FullPrecisionAdaLNConditioning(nn.Module):
+    """
+    Generates adaptive layer norm modulation parameters from a conditioning signal
+    using full-precision layers.
+    """
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_size: int,
+        output_dim: int,
+        eps: float = 1e-6,
+        hidden_ratio: Optional[int] = None
+    ):
+        super().__init__()
+        # Use nn.Linear for full precision
+        self.input_proj = nn.Linear(input_dim, hidden_size, bias=False)
+        # Use FullPrecisionMLP
+        self.mlp = FullPrecisionMLP(hidden_size=hidden_size, hidden_ratio=hidden_ratio, hidden_act='swish')
+        # Use nn.Linear for full precision
+        self.output_proj = nn.Linear(hidden_size, output_dim, bias=True)
+        self.norm = RMSNorm(output_dim, eps=eps)
+        # Use nn.Linear for full precision
+        self.out_proj = nn.Linear(output_dim, output_dim, bias=True)
+
+    def forward(self, condition: torch.Tensor) -> torch.Tensor:
+        x = self.input_proj(condition)
+        x = self.mlp(x)
+        x = self.output_proj(x)
+        x = self.norm(x)
+        return self.out_proj(x)
+# --- END ADDED SECTION ---
+
 
 class MeshDiTBlock(nn.Module):
     """
@@ -202,7 +272,9 @@ class MeshDiTBlock(nn.Module):
         
         self.norm3 = RMSNorm(hidden_size, eps=1e-6)
         
-        self.adaLN_modulation = AdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- MODIFIED: Use full-precision conditioning ---
+        self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- END MODIFIED SECTION ---
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
@@ -228,7 +300,9 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = BitLinear(hidden_size, output_dim, bias=True)
-        self.adaLN_modulation = AdaLNConditioning(hidden_size, hidden_size, 2 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- MODIFIED: Use full-precision conditioning ---
+        self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 2 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- END MODIFIED SECTION ---
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
