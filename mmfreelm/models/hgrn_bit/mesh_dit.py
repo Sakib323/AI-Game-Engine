@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Adapted for 3D Mesh Latent Generation.
-# This version explicitly removes absolute positional embeddings.
-# Modified to use full-precision layers for conditioning as requested.
+# This version implements a dual-stream architecture inspired by MMDiT.
+# It processes shape and conditioning latents in parallel before fusion.
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers.activations import ACT2FN
 from transformers.utils import logging
 
@@ -58,7 +59,6 @@ class HGRNBitMLP(nn.Module):
         z = self.down_proj(self.act_fn(gate) * y)
         return z
 
-# --- ADDED: Full-precision MLP for conditioning ---
 class FullPrecisionMLP(nn.Module):
     """
     A standard MLP block using full-precision linear layers for conditioning.
@@ -89,7 +89,6 @@ class FullPrecisionMLP(nn.Module):
         gate, y = y.chunk(2, -1)
         z = self.down_proj(self.act_fn(gate) * y)
         return z
-# --- END ADDED SECTION ---
 
 
 #################################################################################
@@ -131,15 +130,14 @@ class TimestepEmbedder(nn.Module):
 class TextEmbedder(nn.Module):
     """
     Embeds tokenized text into vector representations using pooling.
+    Outputs a sequence of length 1.
     """
     def __init__(self, vocab_size, hidden_size, dropout_prob):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size + 1, hidden_size)
         self.null_idx = vocab_size
         self.dropout_prob = dropout_prob
-        # --- MODIFIED: Use FullPrecisionMLP for conditioning ---
         self.mlp = FullPrecisionMLP(hidden_size, 4, hidden_act='swish')
-        # --- END MODIFIED SECTION ---
 
     def token_drop(self, input_ids, force_drop_ids=None):
         if force_drop_ids is None:
@@ -156,16 +154,18 @@ class TextEmbedder(nn.Module):
         embeddings = self.embedding(input_ids)
         attention_mask = attention_mask.unsqueeze(-1)
         pooled_embeddings = (embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)
-        return self.mlp(pooled_embeddings)
+        # Output a sequence of length 1 for concatenation into the conditioning stream
+        return self.mlp(pooled_embeddings).unsqueeze(1)
 
 
 class ImageLatentEmbedder(nn.Module):
     """
     Embeds 4D image latents [N, C, H, W] into vector representations.
+    Outputs a sequence of length 1.
     """
     def __init__(self, input_dim, hidden_size, dropout_prob):
         super().__init__()
-        self.null_embedding = nn.Parameter(torch.randn(hidden_size))
+        self.null_embedding = nn.Parameter(torch.randn(1, 1, hidden_size)) # Shape [1, 1, D]
         self.dropout_prob = dropout_prob
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_size),
@@ -175,48 +175,52 @@ class ImageLatentEmbedder(nn.Module):
 
     def forward(self, image_latent, train=True, force_drop_mask=None):
         flattened_latent = torch.flatten(image_latent, start_dim=1)
-        projected_latent = self.mlp(flattened_latent)
+        # Project and reshape to [N, 1, D]
+        projected_latent = self.mlp(flattened_latent).unsqueeze(1)
 
         if force_drop_mask is not None:
-            mask = force_drop_mask.float().unsqueeze(1)
+            mask = force_drop_mask.float().unsqueeze(-1).unsqueeze(-1) # Shape [N, 1, 1]
         elif train and self.dropout_prob > 0:
-            mask = (torch.rand(image_latent.shape[0], device=image_latent.device) < self.dropout_prob).float().unsqueeze(1)
+            mask = (torch.rand(image_latent.shape[0], device=image_latent.device) < self.dropout_prob).float().unsqueeze(-1).unsqueeze(-1)
         else:
-            mask = torch.zeros(image_latent.shape[0], 1, device=image_latent.device)
+            mask = torch.zeros(image_latent.shape[0], 1, 1, device=image_latent.device)
+        
+        # Use broadcasting for null embedding
         return mask * self.null_embedding + (1 - mask) * projected_latent
 
 
 #################################################################################
-#                          Core MeshDiT Model Components                        #
+#               Core MMDiT-style Model Components (NEW)                         #
 #################################################################################
 
-class AdaLNConditioning(nn.Module):
+class CrossAttention(nn.Module):
     """
-    Generates adaptive layer norm modulation parameters from a conditioning signal.
+    A standard cross-attention layer, built with BitLinear for quantization.
     """
-    def __init__(
-        self, 
-        input_dim: int, 
-        hidden_size: int, 
-        output_dim: int,
-        eps: float = 1e-6,
-        hidden_ratio: Optional[int] = None
-    ):
+    def __init__(self, dim, num_heads, head_dim):
         super().__init__()
-        self.input_proj = BitLinear(input_dim, hidden_size, bias=False)
-        self.hgrn_mlp = HGRNBitMLP(hidden_size=hidden_size, hidden_ratio=hidden_ratio, hidden_act='swish')
-        self.output_proj = BitLinear(hidden_size, output_dim, bias=True)
-        self.norm = RMSNorm(output_dim, eps=eps)
-        self.out_proj = BitLinear(output_dim, output_dim, bias=True)
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.scale = head_dim ** -0.5
 
-    def forward(self, condition: torch.Tensor) -> torch.Tensor:
-        x = self.input_proj(condition)
-        x = self.hgrn_mlp(x)
-        x = self.output_proj(x)
-        x = self.norm(x)
-        return self.out_proj(x)
+        self.to_q = BitLinear(dim, num_heads * head_dim, bias=False)
+        self.to_k = BitLinear(dim, num_heads * head_dim, bias=False)
+        self.to_v = BitLinear(dim, num_heads * head_dim, bias=False)
+        self.to_out = BitLinear(num_heads * head_dim, dim, bias=False)
 
-# --- ADDED: Full-precision AdaLN Conditioning ---
+    def forward(self, x, context):
+        b, n, _, h = *x.shape, self.num_heads
+        
+        q = self.to_q(x).view(b, n, h, self.head_dim).transpose(1, 2)
+        k = self.to_k(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
+        v = self.to_v(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
+
+        out = F.scaled_dot_product_attention(q, k, v)
+        
+        out = out.transpose(1, 2).reshape(b, n, -1)
+        return self.to_out(out)
+
+
 class FullPrecisionAdaLNConditioning(nn.Module):
     """
     Generates adaptive layer norm modulation parameters from a conditioning signal
@@ -231,14 +235,10 @@ class FullPrecisionAdaLNConditioning(nn.Module):
         hidden_ratio: Optional[int] = None
     ):
         super().__init__()
-        # Use nn.Linear for full precision
         self.input_proj = nn.Linear(input_dim, hidden_size, bias=False)
-        # Use FullPrecisionMLP
         self.mlp = FullPrecisionMLP(hidden_size=hidden_size, hidden_ratio=hidden_ratio, hidden_act='swish')
-        # Use nn.Linear for full precision
         self.output_proj = nn.Linear(hidden_size, output_dim, bias=True)
         self.norm = RMSNorm(output_dim, eps=eps)
-        # Use nn.Linear for full precision
         self.out_proj = nn.Linear(output_dim, output_dim, bias=True)
 
     def forward(self, condition: torch.Tensor) -> torch.Tensor:
@@ -247,49 +247,90 @@ class FullPrecisionAdaLNConditioning(nn.Module):
         x = self.output_proj(x)
         x = self.norm(x)
         return self.out_proj(x)
-# --- END ADDED SECTION ---
 
-
-class MeshDiTBlock(nn.Module):
+class DualStreamBlock(nn.Module):
     """
-    A single block of the Diffusion Transformer. It delegates RoPE logic
-    to the HGRNBitAttention layer.
+    A Dual-Stream block inspired by MMDiT. It processes two separate streams
+    (e.g., shape `x` and condition `y`) with self-attention and fuses them
+    via cross-attention.
+    """
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+
+        # AdaLN modulation for timestep conditioning
+        self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 10 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+
+        # Stream X (Shape Latents)
+        self.norm_x1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.attn_x = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs)
+        self.norm_x2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.cross_attn = CrossAttention(hidden_size, num_heads, self.head_dim)
+        self.norm_x3 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.mlp_x = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=int(hidden_size * mlp_ratio), hidden_act='swish')
+
+        # Stream Y (Conditioning Latents)
+        self.norm_y1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.attn_y = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs)
+        self.norm_y2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.mlp_y = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=int(hidden_size * mlp_ratio), hidden_act='swish')
+
+    def forward(self, x, y, c):
+        # Generate modulation parameters from timestep conditioning `c`
+        modulated_c = ACT2FN['silu'](c)
+        (shift_x_attn, scale_x_attn, gate_x_attn,
+         shift_x_cross, scale_x_cross, gate_x_cross,
+         shift_x_mlp, scale_x_mlp, gate_x_mlp,
+         shift_y_attn, scale_y_attn, gate_y_attn,
+         shift_y_mlp, scale_y_mlp, gate_y_mlp) = self.adaLN_modulation(modulated_c).chunk(15, dim=1)
+
+        # --- Stream X Processing ---
+        # 1. Self-Attention
+        attn_x_output, _, _ = self.attn_x(modulate(self.norm_x1(x), shift_x_attn, scale_x_attn))
+        x = x + gate_x_attn.unsqueeze(1) * attn_x_output
+        # 2. Cross-Attention (X queries Y)
+        cross_attn_output = self.cross_attn(modulate(self.norm_x2(x), shift_x_cross, scale_x_cross), context=y)
+        x = x + gate_x_cross.unsqueeze(1) * cross_attn_output
+        # 3. MLP
+        mlp_x_output = self.mlp_x(modulate(self.norm_x3(x), shift_x_mlp, scale_x_mlp))
+        x = x + gate_x_mlp.unsqueeze(1) * mlp_x_output
+
+        # --- Stream Y Processing ---
+        # 1. Self-Attention
+        attn_y_output, _, _ = self.attn_y(modulate(self.norm_y1(y), shift_y_attn, scale_y_attn))
+        y = y + gate_y_attn.unsqueeze(1) * attn_y_output
+        # 2. MLP
+        mlp_y_output = self.mlp_y(modulate(self.norm_y2(y), shift_y_mlp, scale_y_mlp))
+        y = y + gate_y_mlp.unsqueeze(1) * mlp_y_output
+
+        return x, y
+
+class SingleStreamBlock(nn.Module):
+    """
+    A single-stream block, formerly MeshDiTBlock. Processes concatenated tokens.
     """
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = HGRNBitAttention(
-            mode='fused_recurrent',
-            hidden_size=hidden_size,
-            num_heads=num_heads,
-            rotary_embeddings=use_rope,
-            use_ternary_rope=use_ternary_rope,
-            **block_kwargs
-        )
+        self.attn = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=mlp_hidden_dim, hidden_act='swish')
-        
         self.norm3 = RMSNorm(hidden_size, eps=1e-6)
-        
-        # --- MODIFIED: Use full-precision conditioning ---
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
-        # --- END MODIFIED SECTION ---
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
-
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
-
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
-        
         mlp_output = self.norm3(self.mlp(mlp_input))
         x = x + gate_mlp.unsqueeze(1) * mlp_output
         return x
-
 
 
 class FinalLayer(nn.Module):
@@ -300,15 +341,14 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = BitLinear(hidden_size, output_dim, bias=True)
-        # --- MODIFIED: Use full-precision conditioning ---
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 2 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
-        # --- END MODIFIED SECTION ---
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
         shift, scale = self.adaLN_modulation(modulated_c).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
         return self.linear(x)
+
 
 #################################################################################
 #                          MeshDiT Main Class                                   #
@@ -317,26 +357,22 @@ class FinalLayer(nn.Module):
 class MeshDiT(nn.Module):
     """
     Diffusion model with a Transformer backbone for 3D Mesh Generation.
-    This version does NOT use absolute positional embeddings.
+    This version uses a dual-stream architecture.
     """ 
     def __init__(
         self,
-        # Mesh Latent parameters
         input_tokens: int = 2048,
         input_dim: int = 64,
-        # Text conditioning parameters
         vocab_size: int = 49408,
-        # Image conditioning parameters
         image_latent_channels: int = 4,
         image_latent_height: int = 64,
         image_latent_width: int = 64,
-        # Model architecture parameters
         hidden_size: int = 1152,
         depth: int = 28,
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         dropout_prob: float = 0.1,
-        # --- RoPE configuration flags ---
+        num_dual_stream_blocks: int = 14, # Number of initial dual-stream blocks
         use_rope: bool = False,
         use_ternary_rope: bool = False,
     ):
@@ -344,30 +380,28 @@ class MeshDiT(nn.Module):
         self.input_dim = input_dim
         self.output_dim = input_dim
         self.num_heads = num_heads
+        self.num_x_tokens = input_tokens
 
+        # Input Embedders
         self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
-        
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         image_latent_dim = image_latent_channels * image_latent_height * image_latent_width
         self.image_embedder = ImageLatentEmbedder(image_latent_dim, hidden_size, dropout_prob)
         
-        # --- Positional Embeddings Removed ---
-        # Absolute positional embeddings are not used because the input is an unordered set of latent vectors.
-        # The `pos_embed` parameter is intentionally removed from this model.
+        # Positional embeddings are disabled
         self.pos_embed = None
         logger.info("Absolute positional embeddings are disabled for this model.")
-        print("Absolute positional embeddings are disabled for this model.")
-
-        # Pass RoPE configuration down to each transformer block.
-        self.blocks = nn.ModuleList([
-            MeshDiTBlock(
-                hidden_size, 
-                num_heads, 
-                mlp_ratio=mlp_ratio,
-                use_rope=use_rope,
-                use_ternary_rope=use_ternary_rope
-            ) for _ in range(depth)
+        
+        # Architecture blocks
+        self.dual_stream_blocks = nn.ModuleList([
+            DualStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope)
+            for _ in range(num_dual_stream_blocks)
+        ])
+        num_single_stream_blocks = depth - num_dual_stream_blocks
+        self.single_stream_blocks = nn.ModuleList([
+            SingleStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope)
+            for _ in range(num_single_stream_blocks)
         ])
         
         self.final_layer = FinalLayer(hidden_size, self.output_dim, mlp_ratio=mlp_ratio)
@@ -383,20 +417,17 @@ class MeshDiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
         
-        # No initialization for pos_embed as it has been removed.
-
         nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
         
-        for block in self.blocks:
+        for block in self.dual_stream_blocks:
             nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
             nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
-            nn.init.constant_(block.adaLN_modulation.out_proj.weight, 0)
-            nn.init.constant_(block.adaLN_modulation.out_proj.bias, 0)
+        for block in self.single_stream_blocks:
+            nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
+            nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
         
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation.out_proj.bias, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
     
@@ -404,59 +435,71 @@ class MeshDiT(nn.Module):
         """
         Forward pass for the MeshDiT model.
         """
-        x = self.x_embedder(x)
-        # Note: Absolute positional embeddings have been removed and are not added here.
+        # 1. Embed all inputs
+        x_tokens = self.x_embedder(x) # [B, N, D]
+        t_emb = self.t_embedder(t) # [B, D]
+        y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training) # [B, 1, D]
+        img_emb = self.image_embedder(y["image_latent"], train=self.training) # [B, 1, D]
         
-        t_emb = self.t_embedder(t)
-        y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
-        img_emb = self.image_embedder(y["image_latent"], train=self.training)
+        # 2. Create conditioning stream (y_tokens)
+        y_tokens = torch.cat([y_emb, img_emb], dim=1) # [B, 2, D]
+
+        # 3. Process through Dual-Stream blocks
+        for block in self.dual_stream_blocks:
+            x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
+
+        # 4. Concatenate for Single-Stream blocks
+        combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
         
-        c = t_emb + y_emb + img_emb
-        
-        for block in self.blocks:
-            x = block(x, c)
-        
-        x = self.final_layer(x, c)
-        return x
+        # 5. Process through Single-Stream blocks
+        for block in self.single_stream_blocks:
+            combined_tokens = block(combined_tokens, t_emb)
+            
+        # 6. Isolate the shape tokens and process through final layer
+        processed_x_tokens = combined_tokens[:, :self.num_x_tokens]
+        output = self.final_layer(processed_x_tokens, t_emb)
+        return output
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, cfg_scale_image):
         """
         Forward pass with Classifier-Free Guidance.
         """
         half = x.shape[0] // 2
-        combined_x = torch.cat([x[:half], x[:half], x[:half], x[:half]], dim=0)
-        combined_t = torch.cat([t[:half], t[:half], t[:half], t[:half]], dim=0)
+        
+        # Prepare inputs for 4 CFG branches
+        x_tokens = self.x_embedder(x)
+        x_tokens = torch.cat([x_tokens[:half]] * 4, dim=0)
+        t_emb = self.t_embedder(torch.cat([t[:half]] * 4, dim=0))
 
+        # Prepare conditioning stream (y_tokens) for 4 CFG branches
         y_ids = y["input_ids"][:half]
         y_mask = y["attention_mask"][:half]
         y_img = y["image_latent"][:half]
 
-        t_emb = self.t_embedder(combined_t)
-        
         text_drop_mask = torch.tensor([1, 1, 0, 0], device=x.device).repeat_interleave(half)
-        y_emb = self.y_embedder(
-            y_ids.repeat(4, 1), 
-            y_mask.repeat(4, 1), 
-            force_drop_ids=text_drop_mask
-        )
+        y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
         
         img_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
-        img_emb = self.image_embedder(
-            y_img.repeat(4, 1, 1, 1),
-            force_drop_mask=img_drop_mask
-        )
+        img_emb = self.image_embedder(y_img.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
         
-        c_combined = t_emb + y_emb + img_emb
-        
-        x_combined = self.x_embedder(combined_x)
-        # Note: Absolute positional embeddings have been removed and are not added here.
+        y_tokens = torch.cat([y_emb, img_emb], dim=1) # [B*4, 2, D]
 
-        for block in self.blocks:
-            x_combined = block(x_combined, c_combined)
-        model_out = self.final_layer(x_combined, c_combined)
+        # Dual-stream processing
+        for block in self.dual_stream_blocks:
+            x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
+        
+        # Concatenate and single-stream processing
+        combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
+        for block in self.single_stream_blocks:
+            combined_tokens = block(combined_tokens, t_emb)
+            
+        # Final layer and CFG combination
+        processed_x_tokens = combined_tokens[:, :self.num_x_tokens]
+        model_out = self.final_layer(processed_x_tokens, t_emb)
 
         e_uncond, e_img, e_text, e_full = torch.chunk(model_out, 4, dim=0)
         
+        # Note: The original paper uses a more complex guidance formula. This is a standard implementation.
         noise_pred = e_uncond + \
                      cfg_scale_text * (e_text - e_uncond) + \
                      cfg_scale_image * (e_img - e_uncond)
@@ -469,16 +512,16 @@ class MeshDiT(nn.Module):
 #################################################################################
 
 def MeshDiT_XL(**kwargs):
-    return MeshDiT(depth=28, hidden_size=1152, num_heads=16, **kwargs)
+    return MeshDiT(depth=28, hidden_size=1152, num_heads=16, num_dual_stream_blocks=14, **kwargs)
 
 def MeshDiT_L(**kwargs):
-    return MeshDiT(depth=24, hidden_size=1024, num_heads=16, **kwargs)
+    return MeshDiT(depth=24, hidden_size=1024, num_heads=16, num_dual_stream_blocks=12, **kwargs)
 
 def MeshDiT_B(**kwargs):
-    return MeshDiT(depth=12, hidden_size=768, num_heads=12, **kwargs)
+    return MeshDiT(depth=12, hidden_size=768, num_heads=12, num_dual_stream_blocks=6, **kwargs)
 
 def MeshDiT_S(**kwargs):
-    return MeshDiT(depth=12, hidden_size=384, num_heads=6, **kwargs)
+    return MeshDiT(depth=12, hidden_size=384, num_heads=6, num_dual_stream_blocks=6, **kwargs)
 
 
 MeshDiT_models = {
