@@ -260,8 +260,13 @@ class DualStreamBlock(nn.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
 
-        # AdaLN modulation for timestep conditioning
-        self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 10 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- FIXED: Changed output dimension from 10*hidden_size to 15*hidden_size ---
+        # We need 15 sets of modulation parameters (shift, scale, gate for 5 operations)
+        # 3 for x_attn, 3 for x_cross_attn, 3 for x_mlp -> 9 for stream x
+        # 3 for y_attn, 3 for y_mlp -> 6 for stream y
+        # Total needed: (3+3+3+3+3) = 15 * hidden_size
+        self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 15 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
+        # --- END FIX ---
 
         # Stream X (Shape Latents)
         self.norm_x1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
