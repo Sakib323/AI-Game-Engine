@@ -2,6 +2,8 @@
 # Adapted for 3D Mesh Latent Generation.
 # This version implements a dual-stream architecture inspired by MMDiT.
 # It processes shape and conditioning latents in parallel before fusion.
+# FIXED: Made token slicing dynamic to prevent shape assertion errors.
+# FIXED: Removed redundant normalization layer in SingleStreamBlock.
 
 from __future__ import annotations
 
@@ -260,13 +262,8 @@ class DualStreamBlock(nn.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
 
-        # --- FIXED: Changed output dimension from 10*hidden_size to 15*hidden_size ---
         # We need 15 sets of modulation parameters (shift, scale, gate for 5 operations)
-        # 3 for x_attn, 3 for x_cross_attn, 3 for x_mlp -> 9 for stream x
-        # 3 for y_attn, 3 for y_mlp -> 6 for stream y
-        # Total needed: (3+3+3+3+3) = 15 * hidden_size
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 15 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
-        # --- END FIX ---
 
         # Stream X (Shape Latents)
         self.norm_x1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -323,18 +320,21 @@ class SingleStreamBlock(nn.Module):
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=mlp_hidden_dim, hidden_act='swish')
-        self.norm3 = RMSNorm(hidden_size, eps=1e-6)
+        # --- FIXED: Removed redundant normalization layer ---
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, c):
         modulated_c = ACT2FN['silu'](c)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
+        
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
+        
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
-        mlp_output = self.norm3(self.mlp(mlp_input))
+        mlp_output = self.mlp(mlp_input) # Directly call MLP
         x = x + gate_mlp.unsqueeze(1) * mlp_output
+        
         return x
 
 
@@ -366,7 +366,7 @@ class MeshDiT(nn.Module):
     """ 
     def __init__(
         self,
-        input_tokens: int = 2048,
+        input_tokens: int = 2048, # This is now a suggestion for dataset creation
         input_dim: int = 64,
         vocab_size: int = 49408,
         image_latent_channels: int = 4,
@@ -385,7 +385,8 @@ class MeshDiT(nn.Module):
         self.input_dim = input_dim
         self.output_dim = input_dim
         self.num_heads = num_heads
-        self.num_x_tokens = input_tokens
+        
+        # NOTE: self.num_x_tokens is removed. We will get this dynamically from the input tensor.
 
         # Input Embedders
         self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
@@ -440,6 +441,9 @@ class MeshDiT(nn.Module):
         """
         Forward pass for the MeshDiT model.
         """
+        # --- FIXED: Get sequence length dynamically from input tensor ---
+        num_x_tokens = x.shape[1]
+
         # 1. Embed all inputs
         x_tokens = self.x_embedder(x) # [B, N, D]
         t_emb = self.t_embedder(t) # [B, D]
@@ -461,14 +465,19 @@ class MeshDiT(nn.Module):
             combined_tokens = block(combined_tokens, t_emb)
             
         # 6. Isolate the shape tokens and process through final layer
-        processed_x_tokens = combined_tokens[:, :self.num_x_tokens]
+        processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
+
+        # Final check to ensure output shape matches input shape
+        assert output.shape == x.shape, f"Final shape mismatch! Output: {output.shape}, Input: {x.shape}"
         return output
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, cfg_scale_image):
         """
         Forward pass with Classifier-Free Guidance.
         """
+        # --- FIXED: Get sequence length dynamically from input tensor ---
+        num_x_tokens = x.shape[1]
         half = x.shape[0] // 2
         
         # Prepare inputs for 4 CFG branches
@@ -499,7 +508,7 @@ class MeshDiT(nn.Module):
             combined_tokens = block(combined_tokens, t_emb)
             
         # Final layer and CFG combination
-        processed_x_tokens = combined_tokens[:, :self.num_x_tokens]
+        processed_x_tokens = combined_tokens[:, :num_x_tokens]
         model_out = self.final_layer(processed_x_tokens, t_emb)
 
         e_uncond, e_img, e_text, e_full = torch.chunk(model_out, 4, dim=0)
