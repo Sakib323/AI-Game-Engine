@@ -1,0 +1,72 @@
+{
+  "1972_porsche_911_carrera_rs.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 Carrera RS",
+    "year": 1972,
+    "description": "A classic 1972 Porsche 911 Carrera RS sports car with iconic rear spoiler and lightweight design, often considered the most collectible 911 of its era."
+  },
+  "1974_porsche_911_targa.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 Targa",
+    "year": 1974,
+    "description": "The 1974 Porsche 911 Targa featuring a removable roof panel and distinctive roll bar, combining open-air driving with sports car performance."
+  },
+  "1995_porsche_911_carrera_rs.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 Carrera RS",
+    "year": 1995,
+    "description": "A rare 1995 Porsche 911 Carrera RS with track-oriented tuning, lightweight build, and aerodynamic enhancements from the 993 generation."
+  },
+  "2004_porsche_carrera_gt.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "Carrera GT",
+    "year": 2004,
+    "description": "The Porsche Carrera GT from 2004, a legendary V10-powered hypercar made of carbon fiber, famous for its raw driving experience."
+  },
+  "2005_porsche_911_gt2.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 GT2",
+    "year": 2005,
+    "description": "The 2005 Porsche 911 GT2, a turbocharged high-performance version of the 911, known for extreme speed and rear-wheel drive handling."
+  },
+  "2011_porsche_911_speedster_997-2.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 Speedster (997.2)",
+    "year": 2011,
+    "description": "The 2011 Porsche 911 Speedster 997.2, a limited-edition open-top sports car celebrating Porsche heritage with wider bodywork and unique styling."
+  },
+  "car-peugeot_206.glb": {
+    "category": "car",
+    "make": "Peugeot",
+    "model": "206",
+    "year": 2000,
+    "description": "A Peugeot 206 compact hatchback, one of the most popular European small cars known for its agility and practicality."
+  },
+  "peugeot_404.glb": {
+    "category": "car",
+    "make": "Peugeot",
+    "model": "404",
+    "year": 1960,
+    "description": "A Peugeot 404 sedan from the 1960s, a French classic with angular design, durability, and historical significance."
+  },
+  "porsche_911.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911",
+    "year": 1964,
+    "description": "The original Porsche 911 sports car, introduced in 1964, famous for its rear-engine layout and timeless design."
+  },
+  "porsche_911_3.2_carrera_coupe.glb": {
+    "category": "car",
+    "make": "Porsche",
+    "model": "911 3.2 Carrera Coupe",
+    "year": 1984,
+    "description": "The Porsche 911 3.2 Carrera Coupe from the 1980s, blending classic styling with improved performance and reliability."
+  }
+}
