@@ -447,14 +447,14 @@ class MeshDiT(nn.Module):
         x_tokens = self.x_embedder(x)
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
-        
         # 2. Handle image embedding based on condition flag
         if self.image_condition:
             img_emb = self.image_embedder(y["image_latent"], train=self.training)
         else:
-            # Force drop the image by creating a drop mask of all ones
-            drop_mask = torch.ones(y["image_latent"].shape[0], device=x.device)
-            img_emb = self.image_embedder(y["image_latent"], train=self.training, force_drop_mask=drop_mask)
+            # If conditioning is off, create a null embedding matching the batch size of x_tokens.
+            # # This avoids the KeyError by not accessing y["image_latent"].
+            batch_size = x_tokens.shape[0]
+            img_emb = self.image_embedder.null_embedding.expand(batch_size, -1, -1)
 
         # 3. Create conditioning stream (y_tokens)
         y_tokens = torch.cat([y_emb, img_emb], dim=1)
@@ -496,12 +496,12 @@ class MeshDiT(nn.Module):
         y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
         
         if self.image_condition:
+            y_img = y["image_latent"][:half]
             img_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
+            img_emb = self.image_embedder(y_img.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
         else:
-            # Force drop image for all branches if conditioning is off
-            img_drop_mask = torch.ones(x_tokens.shape[0], device=x.device)
-
-        img_emb = self.image_embedder(y_img.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
+            cfg_batch_size = x_tokens.shape[0]
+            img_emb = self.image_embedder.null_embedding.expand(cfg_batch_size, -1, -1)
         
         y_tokens = torch.cat([y_emb, img_emb], dim=1)
 
