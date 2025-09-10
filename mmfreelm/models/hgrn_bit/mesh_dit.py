@@ -4,6 +4,7 @@
 # It processes shape and conditioning latents in parallel before fusion.
 # FIXED: Made token slicing dynamic to prevent shape assertion errors.
 # FIXED: Removed redundant normalization layer in SingleStreamBlock.
+# ADDED: image_condition flag to control image conditioning.
 
 from __future__ import annotations
 
@@ -320,7 +321,6 @@ class SingleStreamBlock(nn.Module):
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, intermediate_size=mlp_hidden_dim, hidden_act='swish')
-        # --- FIXED: Removed redundant normalization layer ---
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, c):
@@ -332,7 +332,7 @@ class SingleStreamBlock(nn.Module):
         x = x + gate_msa.unsqueeze(1) * attn_output
         
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
-        mlp_output = self.mlp(mlp_input) # Directly call MLP
+        mlp_output = self.mlp(mlp_input)
         x = x + gate_mlp.unsqueeze(1) * mlp_output
         
         return x
@@ -366,7 +366,7 @@ class MeshDiT(nn.Module):
     """ 
     def __init__(
         self,
-        input_tokens: int = 2048, # This is now a suggestion for dataset creation
+        input_tokens: int = 2048,
         input_dim: int = 64,
         vocab_size: int = 49408,
         image_latent_channels: int = 4,
@@ -377,17 +377,17 @@ class MeshDiT(nn.Module):
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         dropout_prob: float = 0.1,
-        num_dual_stream_blocks: int = 14, # Number of initial dual-stream blocks
+        num_dual_stream_blocks: int = 14,
         use_rope: bool = False,
         use_ternary_rope: bool = False,
+        image_condition: bool = False, # Default to False
     ):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = input_dim
         self.num_heads = num_heads
+        self.image_condition = image_condition
         
-        # NOTE: self.num_x_tokens is removed. We will get this dynamically from the input tensor.
-
         # Input Embedders
         self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -441,34 +441,39 @@ class MeshDiT(nn.Module):
         """
         Forward pass for the MeshDiT model.
         """
-        # --- FIXED: Get sequence length dynamically from input tensor ---
         num_x_tokens = x.shape[1]
 
         # 1. Embed all inputs
-        x_tokens = self.x_embedder(x) # [B, N, D]
-        t_emb = self.t_embedder(t) # [B, D]
-        y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training) # [B, 1, D]
-        img_emb = self.image_embedder(y["image_latent"], train=self.training) # [B, 1, D]
+        x_tokens = self.x_embedder(x)
+        t_emb = self.t_embedder(t)
+        y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
         
-        # 2. Create conditioning stream (y_tokens)
-        y_tokens = torch.cat([y_emb, img_emb], dim=1) # [B, 2, D]
+        # 2. Handle image embedding based on condition flag
+        if self.image_condition:
+            img_emb = self.image_embedder(y["image_latent"], train=self.training)
+        else:
+            # Force drop the image by creating a drop mask of all ones
+            drop_mask = torch.ones(y["image_latent"].shape[0], device=x.device)
+            img_emb = self.image_embedder(y["image_latent"], train=self.training, force_drop_mask=drop_mask)
 
-        # 3. Process through Dual-Stream blocks
+        # 3. Create conditioning stream (y_tokens)
+        y_tokens = torch.cat([y_emb, img_emb], dim=1)
+
+        # 4. Process through Dual-Stream blocks
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
 
-        # 4. Concatenate for Single-Stream blocks
+        # 5. Concatenate for Single-Stream blocks
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
         
-        # 5. Process through Single-Stream blocks
+        # 6. Process through Single-Stream blocks
         for block in self.single_stream_blocks:
             combined_tokens = block(combined_tokens, t_emb)
             
-        # 6. Isolate the shape tokens and process through final layer
+        # 7. Isolate the shape tokens and process through final layer
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
 
-        # Final check to ensure output shape matches input shape
         assert output.shape == x.shape, f"Final shape mismatch! Output: {output.shape}, Input: {x.shape}"
         return output
 
@@ -476,16 +481,13 @@ class MeshDiT(nn.Module):
         """
         Forward pass with Classifier-Free Guidance.
         """
-        # --- FIXED: Get sequence length dynamically from input tensor ---
         num_x_tokens = x.shape[1]
         half = x.shape[0] // 2
         
-        # Prepare inputs for 4 CFG branches
         x_tokens = self.x_embedder(x)
         x_tokens = torch.cat([x_tokens[:half]] * 4, dim=0)
         t_emb = self.t_embedder(torch.cat([t[:half]] * 4, dim=0))
 
-        # Prepare conditioning stream (y_tokens) for 4 CFG branches
         y_ids = y["input_ids"][:half]
         y_mask = y["attention_mask"][:half]
         y_img = y["image_latent"][:half]
@@ -493,30 +495,35 @@ class MeshDiT(nn.Module):
         text_drop_mask = torch.tensor([1, 1, 0, 0], device=x.device).repeat_interleave(half)
         y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
         
-        img_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
+        if self.image_condition:
+            img_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
+        else:
+            # Force drop image for all branches if conditioning is off
+            img_drop_mask = torch.ones(x_tokens.shape[0], device=x.device)
+
         img_emb = self.image_embedder(y_img.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
         
-        y_tokens = torch.cat([y_emb, img_emb], dim=1) # [B*4, 2, D]
+        y_tokens = torch.cat([y_emb, img_emb], dim=1)
 
-        # Dual-stream processing
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
         
-        # Concatenate and single-stream processing
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
         for block in self.single_stream_blocks:
             combined_tokens = block(combined_tokens, t_emb)
             
-        # Final layer and CFG combination
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         model_out = self.final_layer(processed_x_tokens, t_emb)
 
         e_uncond, e_img, e_text, e_full = torch.chunk(model_out, 4, dim=0)
         
-        # Note: The original paper uses a more complex guidance formula. This is a standard implementation.
-        noise_pred = e_uncond + \
-                     cfg_scale_text * (e_text - e_uncond) + \
-                     cfg_scale_image * (e_img - e_uncond)
+        if self.image_condition:
+            noise_pred = e_uncond + \
+                         cfg_scale_text * (e_text - e_uncond) + \
+                         cfg_scale_image * (e_img - e_uncond)
+        else:
+            # When image condition is off, guidance is only on text.
+            noise_pred = e_uncond + cfg_scale_text * (e_text - e_uncond)
         
         return noise_pred
 
