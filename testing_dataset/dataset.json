@@ -1,72 +1,435 @@
+
 {
   "1972_porsche_911_carrera_rs.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 Carrera RS",
     "year": 1972,
-    "description": "A classic 1972 Porsche 911 Carrera RS sports car with iconic rear spoiler and lightweight design, often considered the most collectible 911 of its era."
+    "description": "A classic 1972 Porsche 911 Carrera RS sports car with iconic rear spoiler and lightweight design, often considered the most collectible 911 of its era.",
+    "tags": ["car", "sports car", "classic", "Porsche"]
   },
   "1974_porsche_911_targa.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 Targa",
     "year": 1974,
-    "description": "The 1974 Porsche 911 Targa featuring a removable roof panel and distinctive roll bar, combining open-air driving with sports car performance."
+    "description": "The 1974 Porsche 911 Targa featuring a removable roof panel and distinctive roll bar, combining open-air driving with sports car performance.",
+    "tags": ["car", "sports car", "Porsche", "Targa"]
   },
   "1995_porsche_911_carrera_rs.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 Carrera RS",
     "year": 1995,
-    "description": "A rare 1995 Porsche 911 Carrera RS with track-oriented tuning, lightweight build, and aerodynamic enhancements from the 993 generation."
+    "description": "A rare 1995 Porsche 911 Carrera RS with track-oriented tuning, lightweight build, and aerodynamic enhancements from the 993 generation.",
+    "tags": ["car", "sports car", "Porsche", "track"]
   },
   "2004_porsche_carrera_gt.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "Carrera GT",
     "year": 2004,
-    "description": "The Porsche Carrera GT from 2004, a legendary V10-powered hypercar made of carbon fiber, famous for its raw driving experience."
+    "description": "The Porsche Carrera GT from 2004, a legendary V10-powered hypercar made of carbon fiber, famous for its raw driving experience.",
+    "tags": ["car", "hypercar", "Porsche", "Carrera GT"]
   },
   "2005_porsche_911_gt2.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 GT2",
     "year": 2005,
-    "description": "The 2005 Porsche 911 GT2, a turbocharged high-performance version of the 911, known for extreme speed and rear-wheel drive handling."
+    "description": "The 2005 Porsche 911 GT2, a turbocharged high-performance version of the 911, known for extreme speed and rear-wheel drive handling.",
+    "tags": ["car", "sports car", "Porsche", "GT2"]
   },
   "2011_porsche_911_speedster_997-2.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 Speedster (997.2)",
     "year": 2011,
-    "description": "The 2011 Porsche 911 Speedster 997.2, a limited-edition open-top sports car celebrating Porsche heritage with wider bodywork and unique styling."
+    "description": "The 2011 Porsche 911 Speedster 997.2, a limited-edition open-top sports car celebrating Porsche heritage with wider bodywork and unique styling.",
+    "tags": ["car", "sports car", "Porsche", "Speedster"]
+  },
+  "2019_honda_monkey_125.glb": {
+    "category": "motorcycle",
+    "make": "Honda",
+    "model": "Monkey 125",
+    "year": 2019,
+    "description": "The Honda Monkey 125 is a small but iconic minibike with retro styling and modern performance, popular for city commuting and fun rides.",
+    "tags": ["motorcycle", "Honda", "mini bike", "retro"]
+  },
+  "2024_ducati_streetfighter_v4_s.glb": {
+    "category": "motorcycle",
+    "make": "Ducati",
+    "model": "Streetfighter V4 S",
+    "year": 2024,
+    "description": "The 2024 Ducati Streetfighter V4 S is a naked superbike with 200+ horsepower, advanced electronics, and aggressive Italian styling.",
+    "tags": ["motorcycle", "Ducati", "superbike", "streetfighter"]
+  },
+  "aged_plastic_garden_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Plastic Garden Chair",
+    "year": null,
+    "description": "A simple aged plastic garden chair, commonly used in outdoor settings such as patios, gardens, and backyards.",
+    "tags": ["furniture", "chair", "outdoor", "plastic"]
+  },
+  "air_france_boeing_747-400.glb": {
+    "category": "aircraft",
+    "make": "Boeing",
+    "model": "747-400",
+    "year": 1989,
+    "description": "An Air France Boeing 747-400, one of the most iconic long-haul passenger aircraft, known as the 'Queen of the Skies'.",
+    "tags": ["aircraft", "airliner", "Boeing", "747"]
+  },
+  "ak-47.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": 1949,
+    "description": "The AK-47 assault rifle, designed by Mikhail Kalashnikov, one of the most widely used firearms in the world.",
+    "tags": ["weapon", "rifle", "military", "AK-47"]
+  },
+"antonov.glb": {
+  "category": "aircraft",
+  "make": "Antonov",
+  "model": "An-225",
+  "year": null,
+  "description": "The Antonov An-225 Mriya, the largest cargo aircraft ever built, designed for heavy transport missions.",
+  "tags": ["aircraft", "cargo", "Antonov"]
+},
+  "ba_mi-26.glb": {
+    "category": "helicopter",
+    "make": "Mil",
+    "model": "Mi-26",
+    "year": null,
+    "description": "The Mil Mi-26, a heavy transport helicopter capable of carrying large payloads, one of the biggest helicopters ever built.",
+    "tags": ["helicopter", "military", "transport"]
+  },
+  "ba_mi-38t.glb": {
+    "category": "helicopter",
+    "make": "Mil",
+    "model": "Mi-38T",
+    "year": null,
+    "description": "The Mil Mi-38T is a medium-lift transport helicopter designed for cargo and passenger transport in civil and military roles.",
+    "tags": ["helicopter", "military", "transport"]
+  },
+  "beach_chair_blue_stripes.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Beach Chair",
+    "year": null,
+    "description": "A lightweight beach chair with blue stripes, foldable and easy to carry for outdoor leisure activities.",
+    "tags": ["furniture", "chair", "outdoor", "beach"]
+  },
+  "boeing_fa-18ef_super_hornet.glb": {
+    "category": "fighter jet",
+    "make": "Boeing",
+    "model": "F/A-18E/F Super Hornet",
+    "year": 1999,
+    "description": "A twin-engine, carrier-capable multirole fighter jet used by the U.S. Navy, the Boeing F/A-18E/F Super Hornet is an advanced variant of the original Hornet.",
+    "tags": ["fighter jet", "aircraft", "Boeing", "military"]
+  },
+  "british_rail_class_55.glb": {
+    "category": "train",
+    "make": "British Rail",
+    "model": "Class 55",
+    "year": null,
+    "description": "A British Rail Class 55 diesel locomotive, historically used for express passenger services in the UK.",
+    "tags": ["train", "locomotive", "diesel"]
+  },
+  "c-18a_skylord_military_transport_aircraft.glb": {
+    "category": "aircraft",
+    "make": "C-18A",
+    "model": "Skylord",
+    "year": null,
+    "description": "A military transport aircraft variant, used for cargo and troop transport missions.",
+    "tags": ["aircraft", "transport", "military"]
   },
   "car-peugeot_206.glb": {
     "category": "car",
     "make": "Peugeot",
     "model": "206",
     "year": 2000,
-    "description": "A Peugeot 206 compact hatchback, one of the most popular European small cars known for its agility and practicality."
+    "description": "A Peugeot 206 compact hatchback, one of the most popular European small cars known for its agility and practicality.",
+    "tags": ["car", "Peugeot", "hatchback"]
+  },
+  "eachine_e58_pocket_drone_-_game_ready_asset.glb": {
+    "category": "drone",
+    "make": "Eachine",
+    "model": "E58",
+    "year": null,
+    "description": "A small, foldable pocket drone designed for casual photography and indoor/outdoor flight.",
+    "tags": ["drone", "quadrotor", "Eachine"]
+  },
+  "eft_mp-443_grach.glb": {
+    "category": "weapon",
+    "make": "MP-443",
+    "model": "Grach",
+    "year": null,
+    "description": "A Russian semi-automatic pistol used by military and law enforcement.",
+    "tags": ["weapon", "pistol", "military"]
+  },
+  "eurofighter_typhoon_-_fighter_jet_-_free.glb": {
+    "category": "fighter jet",
+    "make": "Eurofighter",
+    "model": "Typhoon",
+    "year": 2003,
+    "description": "A highly agile multirole fighter jet used by several European air forces, capable of air superiority and ground attack missions.",
+    "tags": ["fighter jet", "Eurofighter", "aircraft", "military"]
+  },
+  "f-15e_strike_eagle_-_fighter_jet_-_free.glb": {
+    "category": "fighter jet",
+    "make": "McDonnell Douglas",
+    "model": "F-15E Strike Eagle",
+    "year": 1988,
+    "description": "A twin-engine, all-weather multirole strike fighter used by the U.S. Air Force for long-range interdiction and air-to-ground missions.",
+    "tags": ["fighter jet", "F-15E", "military", "aircraft"]
+  },
+  "fa-18f.glb": {
+    "category": "fighter jet",
+    "make": "Boeing",
+    "model": "F/A-18F",
+    "year": 1999,
+    "description": "A carrier-capable multirole fighter jet variant with modern avionics and weapons systems.",
+    "tags": ["fighter jet", "Boeing", "military"]
+  },
+  "general_electric_es44ac_black.glb": {
+    "category": "train",
+    "make": "General Electric",
+    "model": "ES44AC",
+    "year": null,
+    "description": "A diesel-electric freight locomotive used widely in North America, painted black in this variant.",
+    "tags": ["train", "locomotive", "freight"]
+  },
+"geranium-2.glb": {
+  "category": "drone",
+  "make": "Geranium",
+  "model": "Geranium-2",
+  "year": null,
+  "description": "A Russian military drone, variant of the Shahed drone, used for reconnaissance and strike missions.",
+  "tags": ["drone", "military", "UAV"]
+},
+  "helldivers2sg-225-breaker_shotgun.glb": {
+    "category": "weapon",
+    "make": "",
+    "model": "SG-225 Breaker Shotgun",
+    "year": null,
+    "description": "A shotgun from the Helldivers 2 universe, fictional firearm for gaming assets.",
+    "tags": ["weapon", "shotgun", "gaming"]
+  },
+  "iranian_shahed-136_military_drone.glb": {
+    "category": "drone",
+    "make": "Shahed",
+    "model": "136",
+    "year": null,
+    "description": "An Iranian-made military UAV used for reconnaissance and strike missions.",
+    "tags": ["drone", "military", "UAV"]
+  },
+  "jasdf_f-2a_low_poly_model.glb": {
+    "category": "fighter jet",
+    "make": "Mitsubishi",
+    "model": "F-2A",
+    "year": 2000,
+    "description": "A lightweight multirole fighter aircraft developed by Japan, based on the F-16 design with local modifications.",
+    "tags": ["fighter jet", "military", "Japan"]
+  },
+  "kar98_stlfor_printing.glb": {
+    "category": "weapon",
+    "make": "Mauser",
+    "model": "Kar98k",
+    "year": 1935,
+    "description": "A bolt-action rifle widely used by German forces during WWII, available as a 3D printable model.",
+    "tags": ["weapon", "rifle", "historic"]
+  },
+  "locomotive_-_ge_ac4400cw.glb": {
+    "category": "train",
+    "make": "General Electric",
+    "model": "AC4400CW",
+    "year": null,
+    "description": "A heavy freight diesel-electric locomotive widely used in North America for cargo transport.",
+    "tags": ["train", "locomotive", "freight"]
+  },
+  "low_poly_canoe__stylized_game_asset.glb": {
+    "category": "boat",
+    "make": "",
+    "model": "Canoe",
+    "year": null,
+    "description": "A stylized low-poly canoe designed as a game-ready asset.",
+    "tags": ["boat", "canoe", "low-poly", "game asset"]
+  },
+  "low_poly_fishing_boat.glb": {
+    "category": "boat",
+    "make": "",
+    "model": "Fishing Boat",
+    "year": null,
+    "description": "A low-poly fishing boat suitable for game or simulation purposes.",
+    "tags": ["boat", "fishing", "low-poly"]
+  },
+  "m48a5_patton.glb": {
+    "category": "tank",
+    "make": "Patton",
+    "model": "M48A5",
+    "year": 1960,
+    "description": "An American main battle tank variant of the M48 Patton, widely used during the Cold War era.",
+    "tags": ["tank", "military", "Patton"]
+  },
+  "mil_mi-24v_hind.glb": {
+    "category": "helicopter",
+    "make": "Mil",
+    "model": "Mi-24V Hind",
+    "year": 1972,
+    "description": "A Soviet attack helicopter capable of troop transport and gunship missions, known for its versatility and firepower.",
+    "tags": ["helicopter", "attack", "military"]
+  },
+  "mq-9_reaper_uav_drone.glb": {
+    "category": "drone",
+    "make": "General Atomics",
+    "model": "MQ-9 Reaper",
+    "year": 2001,
+    "description": "A remotely piloted UAV designed for surveillance and precision strike missions.",
+    "tags": ["drone", "UAV", "military"]
+  },
+  "mq_1_predator_uav.glb": {
+    "category": "drone",
+    "make": "General Atomics",
+    "model": "MQ-1 Predator",
+    "year": 1995,
+    "description": "A remotely piloted UAV used for reconnaissance and targeted strikes, precursor to the MQ-9 Reaper.",
+    "tags": ["drone", "UAV", "military"]
   },
   "peugeot_404.glb": {
     "category": "car",
     "make": "Peugeot",
     "model": "404",
     "year": 1960,
-    "description": "A Peugeot 404 sedan from the 1960s, a French classic with angular design, durability, and historical significance."
+    "description": "A Peugeot 404 sedan from the 1960s, a French classic with angular design, durability, and historical significance.",
+    "tags": ["car", "Peugeot", "classic"]
   },
   "porsche_911.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911",
     "year": 1964,
-    "description": "The original Porsche 911 sports car, introduced in 1964, famous for its rear-engine layout and timeless design."
+    "description": "The original Porsche 911 sports car, introduced in 1964, famous for its rear-engine layout and timeless design.",
+    "tags": ["car", "Porsche", "classic"]
   },
   "porsche_911_3.2_carrera_coupe.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 3.2 Carrera Coupe",
     "year": 1984,
-    "description": "The Porsche 911 3.2 Carrera Coupe from the 1980s, blending classic styling with improved performance and reliability."
+    "description": "The Porsche 911 3.2 Carrera Coupe from the 1980s, blending classic styling with improved performance and reliability.",
+    "tags": ["car", "Porsche", "classic"]
+  },
+  "predator_mk.1_main_battle_tank.glb": {
+    "category": "tank",
+    "make": "Predator",
+    "model": "MK.1",
+    "year": null,
+    "description": "A fictional or game-inspired main battle tank model called Predator MK.1.",
+    "tags": ["tank", "military"]
+  },
+  "saab_jas_39_gripen_-_fighter_jet_-_free.glb": {
+    "category": "fighter jet",
+    "make": "Saab",
+    "model": "JAS 39 Gripen",
+    "year": 1996,
+    "description": "A lightweight, multirole fighter aircraft developed by Sweden, used for air defense and tactical missions.",
+    "tags": ["fighter jet", "Saab", "military"]
+  },
+  "sh-60b_seahawk_helicopter.glb": {
+    "category": "helicopter",
+    "make": "Sikorsky",
+    "model": "SH-60B Seahawk",
+    "year": 1984,
+    "description": "A naval helicopter used by the US Navy for anti-submarine warfare and search-and-rescue operations.",
+    "tags": ["helicopter", "naval", "military"]
+  },
+  "-72_2__low_poly.glb": {
+    "category": "",
+    "make": "",
+    "model": "",
+    "year": null,
+    "description": "",
+    "tags": []
+  },
+  "space_shuttle.glb": {
+    "category": "spacecraft",
+    "make": "",
+    "model": "Space Shuttle",
+    "year": null,
+    "description": "A NASA Space Shuttle orbiter for space missions.",
+    "tags": ["spacecraft", "NASA", "orbiter"]
+  },
+  "space_shuttle_another.glb": {
+    "category": "spacecraft",
+    "make": "",
+    "model": "Space Shuttle",
+    "year": null,
+    "description": "",
+    "tags": ["spacecraft", "NASA"]
+  },
+  "t-55am.glb": {
+    "category": "tank",
+    "make": "T-55",
+    "model": "AM",
+    "year": null,
+    "description": "A modernized variant of the T-55 main battle tank.",
+    "tags": ["tank", "military"]
+  },
+  "t-62md.glb": {
+    "category": "tank",
+    "make": "T-62",
+    "model": "MD",
+    "year": null,
+    "description": "A variant of the Soviet T-62 main battle tank with modern upgrades.",
+    "tags": ["tank", "military"]
+  },
+  "t-64b.glb": {
+    "category": "tank",
+    "make": "T-64",
+    "model": "B",
+    "year": null,
+    "description": "A Soviet T-64B main battle tank with enhanced armor and firepower.",
+    "tags": ["tank", "military"]
+  },
+  "tomos_atx_50c.glb": {
+    "category": "motorcycle",
+    "make": "Tomos",
+    "model": "ATX 50C",
+    "year": null,
+    "description": "A small-displacement motocross-style bike designed for off-road use.",
+    "tags": ["motorcycle", "Tomos", "off-road"]
+  },
+  "us_army_uh-1_huey.glb": {
+    "category": "helicopter",
+    "make": "Bell",
+    "model": "UH-1 Huey",
+    "year": null,
+    "description": "A utility military helicopter widely used by the US Army.",
+    "tags": ["helicopter", "military", "Bell"]
+  },
+  "usmc_uh-1y_venom.glb": {
+    "category": "helicopter",
+    "make": "Bell",
+    "model": "UH-1Y Venom",
+    "year": null,
+    "description": "A modernized version of the Huey helicopter for the US Marine Corps.",
+    "tags": ["helicopter", "military", "Bell"]
+  },
+  "wooden chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "A basic wooden chair, commonly used for indoor seating.",
+    "tags": ["furniture", "chair", "wooden"]
+  },
+  "wooden_rowing_boat_with_oars.glb": {
+    "category": "boat",
+    "make": "",
+    "model": "Rowing Boat",
+    "year": null,
+    "description": "A wooden rowing boat equipped with oars, suitable for rivers and lakes.",
+    "tags": ["boat", "rowboat", "wooden"]
   }
 }
