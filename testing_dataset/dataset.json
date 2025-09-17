@@ -1,11 +1,442 @@
-
 {
+  "a_viking_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Viking Axe",
+    "year": null,
+    "description": "A Norse-inspired Viking axe featuring a distinctive bearded blade, crafted for historical or fantasy combat scenarios.",
+    "tags": ["axe", "viking", "weapon", "melee", "historic"]
+  },
+  "antique_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Antique Chair",
+    "year": null,
+    "description": "An elegant antique chair showcasing a vintage design, perfect for adding a touch of historical class to an interior scene.",
+    "tags": ["chair", "furniture", "antique", "vintage", "seating"]
+  },
+  "axe (1).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Standard Axe",
+    "year": null,
+    "description": "A versatile, single-headed axe that serves equally well as a common chopping tool or a basic melee weapon.",
+    "tags": ["axe", "weapon", "tool", "melee"]
+  },
+  "axe (2).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Standard Axe",
+    "year": null,
+    "description": "This general-purpose axe features a single blade and a sturdy handle, making it suitable for a variety of utility tasks.",
+    "tags": ["axe", "weapon", "tool", "melee"]
+  },
+  "axe (3).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Standard Axe",
+    "year": null,
+    "description": "A common axe design with one cutting edge, functional as both a straightforward weapon and a woodcutting implement.",
+    "tags": ["axe", "weapon", "tool", "melee"]
+  },
+  "axe (4).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Standard Axe",
+    "year": null,
+    "description": "A standard-issue axe with a reliable build, designed for practical applications from forestry to self-defense.",
+    "tags": ["axe", "weapon", "tool", "melee"]
+  },
+  "axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Simple Axe",
+    "year": null,
+    "description": "A rudimentary axe with a plain design, ideal for characters needing a basic tool for survival or crafting.",
+    "tags": ["axe", "weapon", "tool", "simple"]
+  },
+  "axe_celtic__viking_version_2.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Celtic Viking Axe",
+    "year": null,
+    "description": "An ornate axe that blends Celtic knotwork with a Viking blade shape, perfect for a fantasy hero.",
+    "tags": ["axe", "viking", "celtic", "weapon", "melee", "fantasy"]
+  },
+  "axe_old.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Old Axe",
+    "year": null,
+    "description": "This old axe shows clear signs of age and heavy use, with a weathered handle and a chipped blade.",
+    "tags": ["axe", "weapon", "tool", "old", "weathered"]
+  },
+  "basic_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Basic Axe",
+    "year": null,
+    "description": "A fundamental, no-frills axe designed for pure function over form, suitable for any toolkit.",
+    "tags": ["axe", "weapon", "tool", "basic"]
+  },
+  "basic_medieval_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Medieval Axe",
+    "year": null,
+    "description": "A practical medieval axe, representing the type of weapon a common foot soldier or woodsman would carry.",
+    "tags": ["axe", "weapon", "medieval", "historic"]
+  },
+  "battle_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Battle Axe",
+    "year": null,
+    "description": "A fearsome battle axe engineered for war, featuring a broad, heavy blade designed to break shields and armor.",
+    "tags": ["axe", "weapon", "battle axe", "melee", "fantasy"]
+  },
+  "bloody_axe (1).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Bloody Axe",
+    "year": null,
+    "description": "Spattered with blood across its blade, this axe is a grim prop for creating a visceral and intense atmosphere.",
+    "tags": ["axe", "weapon", "bloody", "horror", "gore"]
+  },
+  "bloody_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Bloody Axe",
+    "year": null,
+    "description": "An axe heavily stained with blood, telling a silent story of its recent, violent history. Ideal for horror settings.",
+    "tags": ["axe", "weapon", "bloody", "horror", "gore"]
+  },
+  "chair (1).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Standard Chair",
+    "year": null,
+    "description": "A generic chair model that can be placed in a wide variety of scenes, from a home to an office.",
+    "tags": ["chair", "furniture", "seating"]
+  },
+  "chair (2).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Standard Chair",
+    "year": null,
+    "description": "This is a typical chair asset, designed with a common form to fit seamlessly into background environments.",
+    "tags": ["chair", "furniture", "seating"]
+  },
+  "chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Simple Chair",
+    "year": null,
+    "description": "A minimalist chair with a basic structure, intended for scenes that require simple, functional seating.",
+    "tags": ["chair", "furniture", "seating", "simple"]
+  },
+  "chair__futuristic_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Futuristic Chair",
+    "year": null,
+    "description": "A sci-fi chair featuring a sleek, ergonomic design and unconventional materials for a futuristic setting.",
+    "tags": ["chair", "furniture", "futuristic", "sci-fi", "modern"]
+  },
+  "chair__wooden_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "A traditionally crafted wooden chair, representing a timeless piece of furniture for dining or kitchen areas.",
+    "tags": ["chair", "furniture", "wooden", "seating"]
+  },
+  "chair_wooden_-_18mb_-_2k.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "High-Quality Wooden Chair",
+    "year": null,
+    "description": "A photorealistic wooden chair model featuring high-resolution 2K textures, perfect for architectural visualizations.",
+    "tags": ["chair", "furniture", "wooden", "high-poly", "realistic"]
+  },
+  "country_style_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Country Style Chair",
+    "year": null,
+    "description": "This chair has a charming, rustic farmhouse aesthetic, making it ideal for cozy, country-themed interiors.",
+    "tags": ["chair", "furniture", "country", "rustic", "farmhouse"]
+  },
+  "cover_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Covered Chair",
+    "year": null,
+    "description": "A dining or armchair fitted with a fabric slipcover, offering a clean and elegant look.",
+    "tags": ["chair", "furniture", "covered", "fabric", "upholstered"]
+  },
+  "dane_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Dane Axe",
+    "year": null,
+    "description": "The formidable Dane Axe, a two-handed weapon renowned for its long reach and devastating chopping power in Viking hands.",
+    "tags": ["axe", "weapon", "dane axe", "viking", "two-handed"]
+  },
+  "fire_axe (1).glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "A standard-issue firefighter's axe, designed for breaking down doors and clearing debris during emergencies.",
+    "tags": ["axe", "tool", "firefighter", "emergency", "weapon"]
+  },
+  "fire_axe (2).glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "This fire axe is a crucial piece of emergency equipment, featuring a pick-head for prying and piercing.",
+    "tags": ["axe", "tool", "firefighter", "emergency", "weapon"]
+  },
+  "fire_axe (3).glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "An emergency response axe, commonly used by fire departments for forcible entry and rescue operations.",
+    "tags": ["axe", "tool", "firefighter", "emergency", "weapon"]
+  },
+  "fire_axe (4).glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "A heavy-duty axe with a red-painted head and a durable handle, characteristic of firefighting tools.",
+    "tags": ["axe", "tool", "firefighter", "emergency", "weapon"]
+  },
+  "fire_axe (5).glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "A versatile firefighter tool, this axe is built for extreme conditions and can serve as a makeshift weapon.",
+    "tags": ["axe", "tool", "firefighter", "emergency", "weapon"]
+  },
+  "fire_axe.glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Fire Axe",
+    "year": null,
+    "description": "The iconic fire axe, essential for any emergency scene, featuring a blade on one side and a spike on the other.",
+    "tags": ["axe", "tool", "firefighter", "emergency"]
+  },
+  "low-poly_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Low Poly Axe",
+    "year": null,
+    "description": "An axe model constructed with a low polygon count, making it highly optimized for performance in video games.",
+    "tags": ["axe", "weapon", "low-poly", "game asset"]
+  },
+  "medieval_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Medieval Chair",
+    "year": null,
+    "description": "A robust, throne-like chair with a design that evokes the European Middle Ages, crafted from heavy, dark wood.",
+    "tags": ["chair", "furniture", "medieval", "historic", "throne"]
+  },
+  "office_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Office Chair",
+    "year": null,
+    "description": "An ergonomic office chair designed for comfort during long work hours, complete with wheels and adjustable features.",
+    "tags": ["chair", "furniture", "office", "swivel chair"]
+  },
+  "office_chair_1.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Office Chair",
+    "year": null,
+    "description": "A modern swivel chair for an office or study, featuring armrests and a wheeled base for mobility.",
+    "tags": ["chair", "furniture", "office", "swivel chair"]
+  },
+  "old_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Old Axe",
+    "year": null,
+    "description": "This old, rusty axe has a story to tell, with a pitted blade and a cracked handle that speak of a long history.",
+    "tags": ["axe", "weapon", "tool", "old", "rusty"]
+  },
+  "old_chair (1).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Chair",
+    "year": null,
+    "description": "A derelict chair, heavily worn and damaged, suitable for creating an atmosphere of decay in abandoned environments.",
+    "tags": ["chair", "furniture", "old", "weathered", "broken"]
+  },
+  "old_chair (2).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Chair",
+    "year": null,
+    "description": "Another variation of a worn-out chair, this one showing different patterns of aging and disrepair.",
+    "tags": ["chair", "furniture", "old", "weathered", "broken"]
+  },
+  "old_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Chair",
+    "year": null,
+    "description": "A single piece of aged seating, its peeling paint and worn wood making it a perfect prop for a vintage scene.",
+    "tags": ["chair", "furniture", "old", "vintage"]
+  },
+  "old_fire_axe.glb": {
+    "category": "tool",
+    "make": "Wood, Steel",
+    "model": "Old Fire Axe",
+    "year": null,
+    "description": "A vintage fire axe from a bygone era, exhibiting rust and wear that suggest it has seen many emergencies.",
+    "tags": ["axe", "tool", "firefighter", "old", "vintage"]
+  },
+  "old_wooden_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Wooden Chair",
+    "year": null,
+    "description": "A classic wooden chair that has aged gracefully, with a rich patina and a sturdy, time-tested construction.",
+    "tags": ["chair", "furniture", "old", "wooden", "rustic"]
+  },
+  "ps1_style_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "PS1 Style Axe",
+    "year": null,
+    "description": "A retro 3D model of an axe designed to replicate the distinct low-poly graphics and pixelated textures of the PS1 era.",
+    "tags": ["axe", "weapon", "low-poly", "retro", "ps1", "game asset"]
+  },
+  "rustic_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Rustic Chair",
+    "year": null,
+    "description": "A chair with a natural, unrefined look, built from rough-hewn wood to fit into a cabin or rustic home setting.",
+    "tags": ["chair", "furniture", "rustic", "wooden", "farmhouse"]
+  },
+  "simple_axe (1).glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Simple Axe",
+    "year": null,
+    "description": "A minimalist axe model, representing the most basic form of this tool with no decorative elements.",
+    "tags": ["axe", "weapon", "tool", "simple"]
+  },
+  "simple_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Simple Axe",
+    "year": null,
+    "description": "An unadorned and highly functional axe, featuring a clean design that is easy to recognize and use.",
+    "tags": ["axe", "weapon", "tool", "simple"]
+  },
+  "sofa_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Sofa Chair",
+    "year": null,
+    "description": "A plush, single-seat armchair, designed for maximum comfort and relaxation in a living room environment.",
+    "tags": ["chair", "furniture", "sofa", "armchair", "lounge"]
+  },
+  "stylized_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Stylized Axe",
+    "year": null,
+    "description": "This fantasy axe features exaggerated proportions and a unique, non-realistic art style, perfect for stylized games.",
+    "tags": ["axe", "weapon", "stylized", "fantasy", "cartoon"]
+  },
+  "two_handed_battle_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Two-Handed Battle Axe",
+    "year": null,
+    "description": "A massive two-handed battle axe with a double-sided blade, created to deliver devastating blows in combat.",
+    "tags": ["axe", "weapon", "two-handed", "battle axe", "melee"]
+  },
+  "varins_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Varin's Axe",
+    "year": null,
+    "description": "A replica of the legendary Varin's Axe, a named weapon that holds significance in Norse mythology or fantasy fiction.",
+    "tags": ["axe", "weapon", "viking", "replica", "fantasy"]
+  },
+  "victorian_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Victorian Chair",
+    "year": null,
+    "description": "A chair reflecting the opulence of the Victorian era, featuring intricate carvings, dark wood, and luxurious fabric.",
+    "tags": ["chair", "furniture", "victorian", "antique", "historic"]
+  },
+  "viking_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Viking Axe",
+    "year": null,
+    "description": "A compact, one-handed Viking axe, designed for speed and agility as a reliable sidearm for a Norse warrior.",
+    "tags": ["axe", "weapon", "viking", "norse", "historic"]
+  },
+  "wooden_axe.glb": {
+    "category": "weapon",
+    "make": "Wood, Steel",
+    "model": "Wooden Axe",
+    "year": null,
+    "description": "A simple axe where the wooden handle is the most prominent feature, highlighting its traditional construction.",
+    "tags": ["axe", "weapon", "tool", "wooden"]
+  },
+  "wooden_chair (1).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "A well-crafted wooden chair, showcasing the grain of the wood and a sturdy, functional design for any room.",
+    "tags": ["chair", "furniture", "wooden", "seating"]
+  },
+  "wooden_chair (2).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "Another model of a wooden chair, this one with slightly different proportions or wood type for variety.",
+    "tags": ["chair", "furniture", "wooden", "seating"]
+  },
+  "wooden_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "This is a classic and simple wooden chair, an essential and common asset for interior design.",
+    "tags": ["chair", "furniture", "wooden", "seating"]
+  },
+  "-72_2__low_poly.glb": {
+    "category": "tank",
+    "make": "T-72",
+    "model": "T-72",
+    "year": null,
+    "description": "A low-polygon representation of the T-72 main battle tank, a famed piece of Soviet-era military hardware.",
+    "tags": ["tank", "military", "low-poly", "T-72", "soviet"]
+  },
   "1972_porsche_911_carrera_rs.glb": {
     "category": "car",
     "make": "Porsche",
     "model": "911 Carrera RS",
     "year": 1972,
-    "description": "A classic 1972 Porsche 911 Carrera RS sports car with iconic rear spoiler and lightweight design, often considered the most collectible 911 of its era.",
+    "description": "The legendary 1972 Porsche 911 Carrera RS, a lightweight homologation special renowned for its ducktail spoiler and pure driving dynamics.",
     "tags": ["car", "sports car", "classic", "Porsche"]
   },
   "1974_porsche_911_targa.glb": {
@@ -13,7 +444,7 @@
     "make": "Porsche",
     "model": "911 Targa",
     "year": 1974,
-    "description": "The 1974 Porsche 911 Targa featuring a removable roof panel and distinctive roll bar, combining open-air driving with sports car performance.",
+    "description": "An open-air driving experience is offered by the 1974 Porsche 911 Targa, which features a distinctive roll bar and a removable roof section.",
     "tags": ["car", "sports car", "Porsche", "Targa"]
   },
   "1995_porsche_911_carrera_rs.glb": {
@@ -21,7 +452,7 @@
     "make": "Porsche",
     "model": "911 Carrera RS",
     "year": 1995,
-    "description": "A rare 1995 Porsche 911 Carrera RS with track-oriented tuning, lightweight build, and aerodynamic enhancements from the 993 generation.",
+    "description": "From the 993 generation, the 1995 Porsche 911 Carrera RS is a rare, track-focused machine with significant weight reduction and aerodynamic upgrades.",
     "tags": ["car", "sports car", "Porsche", "track"]
   },
   "2004_porsche_carrera_gt.glb": {
@@ -29,7 +460,7 @@
     "make": "Porsche",
     "model": "Carrera GT",
     "year": 2004,
-    "description": "The Porsche Carrera GT from 2004, a legendary V10-powered hypercar made of carbon fiber, famous for its raw driving experience.",
+    "description": "A masterpiece of German engineering, the 2004 Porsche Carrera GT is a V10-powered hypercar celebrated for its challenging manual transmission and carbon fiber chassis.",
     "tags": ["car", "hypercar", "Porsche", "Carrera GT"]
   },
   "2005_porsche_911_gt2.glb": {
@@ -37,7 +468,7 @@
     "make": "Porsche",
     "model": "911 GT2",
     "year": 2005,
-    "description": "The 2005 Porsche 911 GT2, a turbocharged high-performance version of the 911, known for extreme speed and rear-wheel drive handling.",
+    "description": "Known as the 'widowmaker', the 2005 Porsche 911 GT2 is a turbocharged, rear-wheel-drive monster that demands respect and skill.",
     "tags": ["car", "sports car", "Porsche", "GT2"]
   },
   "2011_porsche_911_speedster_997-2.glb": {
@@ -45,7 +476,7 @@
     "make": "Porsche",
     "model": "911 Speedster (997.2)",
     "year": 2011,
-    "description": "The 2011 Porsche 911 Speedster 997.2, a limited-edition open-top sports car celebrating Porsche heritage with wider bodywork and unique styling.",
+    "description": "A tribute to Porsche's heritage, the 2011 911 Speedster (997.2) is a limited-run model with unique styling, a wider body, and a lower windscreen.",
     "tags": ["car", "sports car", "Porsche", "Speedster"]
   },
   "2019_honda_monkey_125.glb": {
@@ -53,7 +484,7 @@
     "make": "Honda",
     "model": "Monkey 125",
     "year": 2019,
-    "description": "The Honda Monkey 125 is a small but iconic minibike with retro styling and modern performance, popular for city commuting and fun rides.",
+    "description": "A modern re-imagining of a classic, the 2019 Honda Monkey 125 is a fun and quirky minibike perfect for urban adventures.",
     "tags": ["motorcycle", "Honda", "mini bike", "retro"]
   },
   "2024_ducati_streetfighter_v4_s.glb": {
@@ -61,7 +492,7 @@
     "make": "Ducati",
     "model": "Streetfighter V4 S",
     "year": 2024,
-    "description": "The 2024 Ducati Streetfighter V4 S is a naked superbike with 200+ horsepower, advanced electronics, and aggressive Italian styling.",
+    "description": "The 2024 Ducati Streetfighter V4 S is a high-performance naked bike, boasting over 200 horsepower and winglets for aerodynamic stability.",
     "tags": ["motorcycle", "Ducati", "superbike", "streetfighter"]
   },
   "aged_plastic_garden_chair.glb": {
@@ -69,7 +500,7 @@
     "make": "",
     "model": "Plastic Garden Chair",
     "year": null,
-    "description": "A simple aged plastic garden chair, commonly used in outdoor settings such as patios, gardens, and backyards.",
+    "description": "A weathered plastic garden chair, showing the subtle effects of sun and rain, commonly found on patios and in backyards.",
     "tags": ["furniture", "chair", "outdoor", "plastic"]
   },
   "air_france_boeing_747-400.glb": {
@@ -77,7 +508,7 @@
     "make": "Boeing",
     "model": "747-400",
     "year": 1989,
-    "description": "An Air France Boeing 747-400, one of the most iconic long-haul passenger aircraft, known as the 'Queen of the Skies'.",
+    "description": "The iconic Boeing 747-400, affectionately called the 'Queen of the Skies', depicted here in the classic Air France livery.",
     "tags": ["aircraft", "airliner", "Boeing", "747"]
   },
   "ak-47.glb": {
@@ -85,23 +516,23 @@
     "make": "Kalashnikov",
     "model": "AK-47",
     "year": 1949,
-    "description": "The AK-47 assault rifle, designed by Mikhail Kalashnikov, one of the most widely used firearms in the world.",
+    "description": "The legendary AK-47 assault rifle, a symbol of military firepower recognized globally for its reliability and simple design.",
     "tags": ["weapon", "rifle", "military", "AK-47"]
   },
-"antonov.glb": {
-  "category": "aircraft",
-  "make": "Antonov",
-  "model": "An-225",
-  "year": null,
-  "description": "The Antonov An-225 Mriya, the largest cargo aircraft ever built, designed for heavy transport missions.",
-  "tags": ["aircraft", "cargo", "Antonov"]
-},
+  "antonov.glb": {
+    "category": "aircraft",
+    "make": "Antonov",
+    "model": "An-225",
+    "year": null,
+    "description": "A model of the Antonov An-225 Mriya, which was the world's largest and heaviest cargo aircraft before its destruction.",
+    "tags": ["aircraft", "cargo", "Antonov"]
+  },
   "ba_mi-26.glb": {
     "category": "helicopter",
     "make": "Mil",
     "model": "Mi-26",
     "year": null,
-    "description": "The Mil Mi-26, a heavy transport helicopter capable of carrying large payloads, one of the biggest helicopters ever built.",
+    "description": "The Mil Mi-26, a Soviet-designed heavy transport helicopter that holds the title of the largest and most powerful helicopter ever produced.",
     "tags": ["helicopter", "military", "transport"]
   },
   "ba_mi-38t.glb": {
@@ -109,7 +540,7 @@
     "make": "Mil",
     "model": "Mi-38T",
     "year": null,
-    "description": "The Mil Mi-38T is a medium-lift transport helicopter designed for cargo and passenger transport in civil and military roles.",
+    "description": "The Mil Mi-38T is a modern Russian transport helicopter, designed as a versatile platform for both military and civilian cargo missions.",
     "tags": ["helicopter", "military", "transport"]
   },
   "beach_chair_blue_stripes.glb": {
@@ -117,7 +548,7 @@
     "make": "",
     "model": "Beach Chair",
     "year": null,
-    "description": "A lightweight beach chair with blue stripes, foldable and easy to carry for outdoor leisure activities.",
+    "description": "A foldable beach chair with a classic blue and white striped fabric, perfect for any seaside or poolside scene.",
     "tags": ["furniture", "chair", "outdoor", "beach"]
   },
   "boeing_fa-18ef_super_hornet.glb": {
@@ -125,7 +556,7 @@
     "make": "Boeing",
     "model": "F/A-18E/F Super Hornet",
     "year": 1999,
-    "description": "A twin-engine, carrier-capable multirole fighter jet used by the U.S. Navy, the Boeing F/A-18E/F Super Hornet is an advanced variant of the original Hornet.",
+    "description": "The Boeing F/A-18E/F Super Hornet is the U.S. Navy's premier carrier-based multirole fighter jet, an advanced evolution of the original Hornet.",
     "tags": ["fighter jet", "aircraft", "Boeing", "military"]
   },
   "british_rail_class_55.glb": {
@@ -133,7 +564,7 @@
     "make": "British Rail",
     "model": "Class 55",
     "year": null,
-    "description": "A British Rail Class 55 diesel locomotive, historically used for express passenger services in the UK.",
+    "description": "The British Rail Class 55 'Deltic', a high-speed diesel locomotive famous for its powerful engines and service on the East Coast Main Line.",
     "tags": ["train", "locomotive", "diesel"]
   },
   "c-18a_skylord_military_transport_aircraft.glb": {
@@ -141,7 +572,7 @@
     "make": "C-18A",
     "model": "Skylord",
     "year": null,
-    "description": "A military transport aircraft variant, used for cargo and troop transport missions.",
+    "description": "The C-18A Skylord, a military transport aircraft used primarily for cargo and personnel movement by armed forces.",
     "tags": ["aircraft", "transport", "military"]
   },
   "car-peugeot_206.glb": {
@@ -149,7 +580,7 @@
     "make": "Peugeot",
     "model": "206",
     "year": 2000,
-    "description": "A Peugeot 206 compact hatchback, one of the most popular European small cars known for its agility and practicality.",
+    "description": "A model of the Peugeot 206, a best-selling European compact hatchback praised for its stylish design and nimble handling.",
     "tags": ["car", "Peugeot", "hatchback"]
   },
   "eachine_e58_pocket_drone_-_game_ready_asset.glb": {
@@ -157,7 +588,7 @@
     "make": "Eachine",
     "model": "E58",
     "year": null,
-    "description": "A small, foldable pocket drone designed for casual photography and indoor/outdoor flight.",
+    "description": "The Eachine E58, a popular and affordable pocket drone that features a foldable design and is ready to be used as a game asset.",
     "tags": ["drone", "quadrotor", "Eachine"]
   },
   "eft_mp-443_grach.glb": {
@@ -165,7 +596,7 @@
     "make": "MP-443",
     "model": "Grach",
     "year": null,
-    "description": "A Russian semi-automatic pistol used by military and law enforcement.",
+    "description": "The MP-443 Grach, the standard issue semi-automatic pistol for the Russian military, known for its ruggedness.",
     "tags": ["weapon", "pistol", "military"]
   },
   "eurofighter_typhoon_-_fighter_jet_-_free.glb": {
@@ -173,7 +604,7 @@
     "make": "Eurofighter",
     "model": "Typhoon",
     "year": 2003,
-    "description": "A highly agile multirole fighter jet used by several European air forces, capable of air superiority and ground attack missions.",
+    "description": "The Eurofighter Typhoon, a highly agile twin-engine multirole fighter jet developed by a consortium of European nations.",
     "tags": ["fighter jet", "Eurofighter", "aircraft", "military"]
   },
   "f-15e_strike_eagle_-_fighter_jet_-_free.glb": {
@@ -181,7 +612,7 @@
     "make": "McDonnell Douglas",
     "model": "F-15E Strike Eagle",
     "year": 1988,
-    "description": "A twin-engine, all-weather multirole strike fighter used by the U.S. Air Force for long-range interdiction and air-to-ground missions.",
+    "description": "The F-15E Strike Eagle, an all-weather multirole strike fighter and a derivative of the F-15 air superiority fighter.",
     "tags": ["fighter jet", "F-15E", "military", "aircraft"]
   },
   "fa-18f.glb": {
@@ -189,7 +620,7 @@
     "make": "Boeing",
     "model": "F/A-18F",
     "year": 1999,
-    "description": "A carrier-capable multirole fighter jet variant with modern avionics and weapons systems.",
+    "description": "A detailed model of the F/A-18F Super Hornet, the two-seat variant of this advanced carrier-capable fighter jet.",
     "tags": ["fighter jet", "Boeing", "military"]
   },
   "general_electric_es44ac_black.glb": {
@@ -197,23 +628,23 @@
     "make": "General Electric",
     "model": "ES44AC",
     "year": null,
-    "description": "A diesel-electric freight locomotive used widely in North America, painted black in this variant.",
+    "description": "The General Electric ES44AC, a powerful diesel-electric freight locomotive, shown here in a sleek all-black paint scheme.",
     "tags": ["train", "locomotive", "freight"]
   },
-"geranium-2.glb": {
-  "category": "drone",
-  "make": "Geranium",
-  "model": "Geranium-2",
-  "year": null,
-  "description": "A Russian military drone, variant of the Shahed drone, used for reconnaissance and strike missions.",
-  "tags": ["drone", "military", "UAV"]
-},
+  "geranium-2.glb": {
+    "category": "drone",
+    "make": "Geranium",
+    "model": "Geranium-2",
+    "year": null,
+    "description": "The Geranium-2, a type of military loitering munition or 'kamikaze drone' used for precision strike missions.",
+    "tags": ["drone", "military", "UAV"]
+  },
   "helldivers2sg-225-breaker_shotgun.glb": {
     "category": "weapon",
     "make": "",
     "model": "SG-225 Breaker Shotgun",
     "year": null,
-    "description": "A shotgun from the Helldivers 2 universe, fictional firearm for gaming assets.",
+    "description": "A model of the SG-225 Breaker shotgun, a powerful, fictional firearm from the video game Helldivers 2.",
     "tags": ["weapon", "shotgun", "gaming"]
   },
   "iranian_shahed-136_military_drone.glb": {
@@ -221,7 +652,7 @@
     "make": "Shahed",
     "model": "136",
     "year": null,
-    "description": "An Iranian-made military UAV used for reconnaissance and strike missions.",
+    "description": "The Shahed-136, an Iranian-made loitering munition drone known for its distinctive delta-wing design.",
     "tags": ["drone", "military", "UAV"]
   },
   "jasdf_f-2a_low_poly_model.glb": {
@@ -229,7 +660,7 @@
     "make": "Mitsubishi",
     "model": "F-2A",
     "year": 2000,
-    "description": "A lightweight multirole fighter aircraft developed by Japan, based on the F-16 design with local modifications.",
+    "description": "A low-poly model of the Mitsubishi F-2A, a multirole fighter jet used by the Japan Air Self-Defense Force.",
     "tags": ["fighter jet", "military", "Japan"]
   },
   "kar98_stlfor_printing.glb": {
@@ -237,7 +668,7 @@
     "make": "Mauser",
     "model": "Kar98k",
     "year": 1935,
-    "description": "A bolt-action rifle widely used by German forces during WWII, available as a 3D printable model.",
+    "description": "The Karabiner 98k, a German bolt-action rifle that was the standard service rifle during WWII, here as a 3D printable model.",
     "tags": ["weapon", "rifle", "historic"]
   },
   "locomotive_-_ge_ac4400cw.glb": {
@@ -245,7 +676,7 @@
     "make": "General Electric",
     "model": "AC4400CW",
     "year": null,
-    "description": "A heavy freight diesel-electric locomotive widely used in North America for cargo transport.",
+    "description": "The GE AC4400CW, a high-horsepower freight locomotive that is a common sight on railways across North America.",
     "tags": ["train", "locomotive", "freight"]
   },
   "low_poly_canoe__stylized_game_asset.glb": {
@@ -253,7 +684,7 @@
     "make": "",
     "model": "Canoe",
     "year": null,
-    "description": "A stylized low-poly canoe designed as a game-ready asset.",
+    "description": "A stylized, low-poly canoe designed with a distinct art style, ready for implementation as a game asset.",
     "tags": ["boat", "canoe", "low-poly", "game asset"]
   },
   "low_poly_fishing_boat.glb": {
@@ -261,7 +692,7 @@
     "make": "",
     "model": "Fishing Boat",
     "year": null,
-    "description": "A low-poly fishing boat suitable for game or simulation purposes.",
+    "description": "A simple, low-poly fishing boat, perfect for creating a peaceful harbor or lakeside scene in a game.",
     "tags": ["boat", "fishing", "low-poly"]
   },
   "m48a5_patton.glb": {
@@ -269,7 +700,7 @@
     "make": "Patton",
     "model": "M48A5",
     "year": 1960,
-    "description": "An American main battle tank variant of the M48 Patton, widely used during the Cold War era.",
+    "description": "The M48A5 Patton, an upgraded variant of the American M48 main battle tank used extensively during the Cold War.",
     "tags": ["tank", "military", "Patton"]
   },
   "mil_mi-24v_hind.glb": {
@@ -277,7 +708,7 @@
     "make": "Mil",
     "model": "Mi-24V Hind",
     "year": 1972,
-    "description": "A Soviet attack helicopter capable of troop transport and gunship missions, known for its versatility and firepower.",
+    "description": "The Mil Mi-24V Hind, a Soviet-era large helicopter gunship and attack helicopter that can also transport troops.",
     "tags": ["helicopter", "attack", "military"]
   },
   "mq-9_reaper_uav_drone.glb": {
@@ -285,7 +716,7 @@
     "make": "General Atomics",
     "model": "MQ-9 Reaper",
     "year": 2001,
-    "description": "A remotely piloted UAV designed for surveillance and precision strike missions.",
+    "description": "The General Atomics MQ-9 Reaper, a remotely piloted aircraft used for long-endurance surveillance and precision strikes.",
     "tags": ["drone", "UAV", "military"]
   },
   "mq_1_predator_uav.glb": {
@@ -293,7 +724,7 @@
     "make": "General Atomics",
     "model": "MQ-1 Predator",
     "year": 1995,
-    "description": "A remotely piloted UAV used for reconnaissance and targeted strikes, precursor to the MQ-9 Reaper.",
+    "description": "The MQ-1 Predator, an early and influential remotely piloted aircraft that paved the way for modern drone warfare.",
     "tags": ["drone", "UAV", "military"]
   },
   "peugeot_404.glb": {
@@ -301,7 +732,7 @@
     "make": "Peugeot",
     "model": "404",
     "year": 1960,
-    "description": "A Peugeot 404 sedan from the 1960s, a French classic with angular design, durability, and historical significance.",
+    "description": "The Peugeot 404, a classic French family sedan from the 1960s known for its robust construction and timeless Pininfarina design.",
     "tags": ["car", "Peugeot", "classic"]
   },
   "porsche_911.glb": {
@@ -309,7 +740,7 @@
     "make": "Porsche",
     "model": "911",
     "year": 1964,
-    "description": "The original Porsche 911 sports car, introduced in 1964, famous for its rear-engine layout and timeless design.",
+    "description": "The iconic first-generation Porsche 911, which debuted in 1964 and set the standard for sports cars with its revolutionary rear-engine layout.",
     "tags": ["car", "Porsche", "classic"]
   },
   "porsche_911_3.2_carrera_coupe.glb": {
@@ -317,7 +748,7 @@
     "make": "Porsche",
     "model": "911 3.2 Carrera Coupe",
     "year": 1984,
-    "description": "The Porsche 911 3.2 Carrera Coupe from the 1980s, blending classic styling with improved performance and reliability.",
+    "description": "The Porsche 911 3.2 Carrera Coupe represents a significant evolution in the 911's history, offering improved performance in the 1980s.",
     "tags": ["car", "Porsche", "classic"]
   },
   "predator_mk.1_main_battle_tank.glb": {
@@ -325,7 +756,7 @@
     "make": "Predator",
     "model": "MK.1",
     "year": null,
-    "description": "A fictional or game-inspired main battle tank model called Predator MK.1.",
+    "description": "The Predator MK.1, a fictional main battle tank model, likely designed for a science fiction or modern combat video game.",
     "tags": ["tank", "military"]
   },
   "saab_jas_39_gripen_-_fighter_jet_-_free.glb": {
@@ -333,7 +764,7 @@
     "make": "Saab",
     "model": "JAS 39 Gripen",
     "year": 1996,
-    "description": "A lightweight, multirole fighter aircraft developed by Sweden, used for air defense and tactical missions.",
+    "description": "The Saab JAS 39 Gripen, a Swedish multirole fighter aircraft known for its efficiency and advanced avionics.",
     "tags": ["fighter jet", "Saab", "military"]
   },
   "sh-60b_seahawk_helicopter.glb": {
@@ -341,23 +772,15 @@
     "make": "Sikorsky",
     "model": "SH-60B Seahawk",
     "year": 1984,
-    "description": "A naval helicopter used by the US Navy for anti-submarine warfare and search-and-rescue operations.",
+    "description": "The Sikorsky SH-60B Seahawk, the U.S. Navy's primary anti-submarine warfare and search-and-rescue helicopter.",
     "tags": ["helicopter", "naval", "military"]
-  },
-  "-72_2__low_poly.glb": {
-    "category": "",
-    "make": "",
-    "model": "",
-    "year": null,
-    "description": "",
-    "tags": []
   },
   "space_shuttle.glb": {
     "category": "spacecraft",
     "make": "",
     "model": "Space Shuttle",
     "year": null,
-    "description": "A NASA Space Shuttle orbiter for space missions.",
+    "description": "A model of the NASA Space Shuttle, a partially reusable low Earth orbital spacecraft that operated from 1981 to 2011.",
     "tags": ["spacecraft", "NASA", "orbiter"]
   },
   "space_shuttle_another.glb": {
@@ -365,7 +788,7 @@
     "make": "",
     "model": "Space Shuttle",
     "year": null,
-    "description": "",
+    "description": "An alternate model of the iconic Space Shuttle orbiter, focusing on different details of the historic spacecraft.",
     "tags": ["spacecraft", "NASA"]
   },
   "t-55am.glb": {
@@ -373,7 +796,7 @@
     "make": "T-55",
     "model": "AM",
     "year": null,
-    "description": "A modernized variant of the T-55 main battle tank.",
+    "description": "The T-55AM, a heavily modernized version of the ubiquitous Soviet T-55 main battle tank with improved armor and systems.",
     "tags": ["tank", "military"]
   },
   "t-62md.glb": {
@@ -381,7 +804,7 @@
     "make": "T-62",
     "model": "MD",
     "year": null,
-    "description": "A variant of the Soviet T-62 main battle tank with modern upgrades.",
+    "description": "A variant of the Soviet T-62 main battle tank, the MD model features specific upgrades for enhanced combat effectiveness.",
     "tags": ["tank", "military"]
   },
   "t-64b.glb": {
@@ -389,7 +812,7 @@
     "make": "T-64",
     "model": "B",
     "year": null,
-    "description": "A Soviet T-64B main battle tank with enhanced armor and firepower.",
+    "description": "The T-64B, an advanced version of the Soviet T-64 main battle tank, which introduced composite armor and a new main gun.",
     "tags": ["tank", "military"]
   },
   "tomos_atx_50c.glb": {
@@ -397,7 +820,7 @@
     "make": "Tomos",
     "model": "ATX 50C",
     "year": null,
-    "description": "A small-displacement motocross-style bike designed for off-road use.",
+    "description": "The Tomos ATX 50C, a small-engine motocross-style bike popular in Europe for its off-road capabilities and simple design.",
     "tags": ["motorcycle", "Tomos", "off-road"]
   },
   "us_army_uh-1_huey.glb": {
@@ -405,7 +828,7 @@
     "make": "Bell",
     "model": "UH-1 Huey",
     "year": null,
-    "description": "A utility military helicopter widely used by the US Army.",
+    "description": "The Bell UH-1 Huey, an iconic utility helicopter forever associated with the U.S. Army and the Vietnam War.",
     "tags": ["helicopter", "military", "Bell"]
   },
   "usmc_uh-1y_venom.glb": {
@@ -413,7 +836,7 @@
     "make": "Bell",
     "model": "UH-1Y Venom",
     "year": null,
-    "description": "A modernized version of the Huey helicopter for the US Marine Corps.",
+    "description": "The Bell UH-1Y Venom, a highly modernized, twin-engine version of the Huey, developed for the U.S. Marine Corps.",
     "tags": ["helicopter", "military", "Bell"]
   },
   "wooden chair.glb": {
@@ -421,7 +844,7 @@
     "make": "",
     "model": "Wooden Chair",
     "year": null,
-    "description": "A basic wooden chair, commonly used for indoor seating.",
+    "description": "A generic but functional wooden chair, designed for simple indoor seating arrangements.",
     "tags": ["furniture", "chair", "wooden"]
   },
   "wooden_rowing_boat_with_oars.glb": {
@@ -429,7 +852,7 @@
     "make": "",
     "model": "Rowing Boat",
     "year": null,
-    "description": "A wooden rowing boat equipped with oars, suitable for rivers and lakes.",
+    "description": "A traditional wooden rowing boat, complete with a set of oars, perfect for recreating a serene lake or river scene.",
     "tags": ["boat", "rowboat", "wooden"]
   }
 }
