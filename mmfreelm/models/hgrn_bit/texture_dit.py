@@ -40,7 +40,7 @@ from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 from mmfreelm.modules.activations import ACT2FN
-from mmfreelm.modules.layernorm import ACT2FN
+from mmfreelm.modules.layernorm import LayerNorm
 
 # --- Self-Contained Helper Functions & Classes ---
 
