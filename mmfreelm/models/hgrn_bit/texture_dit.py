@@ -36,11 +36,11 @@ import torch.nn as nn
 from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
 
-# Import necessary components from your provided scripts
-from hgrn_bit import HGRNBitAttention
-from fusedbitnet import FusedBitLinear as BitLinear
-from layernorm import LayerNorm
-from activations import ACT2FN
+from mmfreelm.layers.hgrn_bit import HGRNBitAttention
+from mmfreelm.modules import RMSNorm, LayerNorm
+from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from mmfreelm.modules.activations import ACT2FN
+from mmfreelm.modules.layernorm import ACT2FN
 
 # --- Self-Contained Helper Functions & Classes ---
 
