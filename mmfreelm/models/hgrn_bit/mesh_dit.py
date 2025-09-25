@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
-# MODIFIED: Un-commented and corrected the `forward_with_cfg` method to
-# align with the refactored architecture and support classifier-free guidance
-# during inference.
+# FIXED: The logic within FluxBitBlock is corrected to concatenate hidden states
+# before the attention call, resolving the RuntimeError.
+# ADDED: forward_with_cfg is properly implemented for inference-time guidance.
 
 from __future__ import annotations
 
 import math
-from typing import Optional, Any, Dict, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers.activations import ACT2FN
 from transformers.utils import logging
 
@@ -20,34 +19,12 @@ from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
 logger = logging.get_logger(__name__)
 
-
 #################################################################################
 #               AdaLayerNorm Implementations (from Diffusers)                   #
 #################################################################################
 
-class AdaLayerNorm(nn.Module):
-    """
-    Norm layer adaptive to embedding inputs.
-    """
-
-    def __init__(self, embedding_dim: int, num_embeddings: int):
-        super().__init__()
-        self.emb = nn.Embedding(num_embeddings, embedding_dim)
-        self.silu = nn.SiLU()
-        self.linear = nn.Linear(embedding_dim, embedding_dim * 2)
-        self.norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
-
-    def forward(self, x, emb):
-        emb_out = self.linear(self.silu(self.emb(emb))).unsqueeze(1)
-        scale, shift = torch.chunk(emb_out, 2, dim=2)
-        x = self.norm(x) * (1 + scale) + shift
-        return x
-
 class AdaLayerNormZero(nn.Module):
-    """
-    Adaptive Layer Normalization Zero, used in Flux.
-    """
-
+    """Adaptive Layer Normalization Zero, used in Flux."""
     def __init__(self, embedding_dim: int):
         super().__init__()
         self.emb = nn.Sequential(
@@ -58,16 +35,13 @@ class AdaLayerNormZero(nn.Module):
 
     def forward(self, x, emb):
         emb_out = self.emb(emb).unsqueeze(1)
-        # The unsqueeze is for sequence broadcasting
         scale_msa, shift_msa, gate_msa, scale_mlp, shift_mlp, gate_mlp = emb_out.chunk(6, dim=2)
         x = self.norm(x)
         x = x * (1 + scale_msa) + shift_msa
         return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
 
 class AdaLayerNormZeroSingle(nn.Module):
-    """
-    AdaLayerNormZero for single stream blocks in Flux.
-    """
+    """AdaLayerNormZero for single stream blocks in Flux."""
     def __init__(self, embedding_dim: int):
         super().__init__()
         self.emb = nn.Sequential(
@@ -84,7 +58,7 @@ class AdaLayerNormZeroSingle(nn.Module):
         return x, gate
 
 #################################################################################
-#               Core MMDiT-style Model Components (Refactored)                  #
+#               Core MMDiT-style Model Components (Refactored & Fixed)          #
 #################################################################################
 
 class HGRNBitMLP(nn.Module):
@@ -101,86 +75,52 @@ class HGRNBitMLP(nn.Module):
         z = self.down_proj(self.act_fn(gate) * y)
         return z
 
-class JointStreamAttention(nn.Module):
-    """
-    Custom attention module to process two streams jointly, inspired by FluxAttnProcessor2_0.
-    It uses your HGRNBitAttention as the core attention mechanism.
-    """
-    def __init__(self, query_dim: int, num_heads: int, use_rope: bool, use_ternary_rope: bool, **block_kwargs):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = query_dim // num_heads
-
-        self.to_q = BitLinear(query_dim, query_dim, bias=False)
-        self.to_k = BitLinear(query_dim, query_dim, bias=False)
-        self.to_v = BitLinear(query_dim, query_dim, bias=False)
-        self.to_out = BitLinear(query_dim, query_dim, bias=False)
-
-        self.add_q_proj = BitLinear(query_dim, query_dim, bias=False)
-        self.add_k_proj = BitLinear(query_dim, query_dim, bias=False)
-        self.add_v_proj = BitLinear(query_dim, query_dim, bias=False)
-        self.to_add_out = BitLinear(query_dim, query_dim, bias=False)
-
-        self.attn = HGRNBitAttention(
-            hidden_size=query_dim, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs
-        )
-
-    def forward(self, hidden_states: torch.Tensor, encoder_hidden_states: torch.Tensor):
-        q_s, k_s, v_s = self.to_q(hidden_states), self.to_k(hidden_states), self.to_v(hidden_states)
-        q_c, k_c, v_c = self.add_q_proj(encoder_hidden_states), self.add_k_proj(encoder_hidden_states), self.add_v_proj(encoder_hidden_states)
-
-        q_joint = torch.cat([q_c, q_s], dim=1)
-        k_joint = torch.cat([k_c, k_s], dim=1)
-        v_joint = torch.cat([v_c, v_s], dim=1)
-
-        attn_output, _, _ = self.attn(q_joint, attention_mask=None, past_key_values=None)
-
-        len_c = encoder_hidden_states.shape[1]
-        attn_output_c, attn_output_s = attn_output[:, :len_c, :], attn_output[:, len_c:, :]
-
-        hidden_states = self.to_out(attn_output_s)
-        encoder_hidden_states = self.to_add_out(attn_output_c)
-
-        return hidden_states, encoder_hidden_states
-
-
 class FluxBitBlock(nn.Module):
     """
-    A Dual-Stream block that aligns with the Flux architecture, using ternary layers.
+    FIXED: A Dual-Stream block that correctly implements the Flux architecture.
     """
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
         self.hidden_size = hidden_size
         self.norm1 = AdaLayerNormZero(hidden_size)
         self.norm1_context = AdaLayerNormZero(hidden_size)
-        self.attn = JointStreamAttention(hidden_size, num_heads, use_rope, use_ternary_rope, **block_kwargs)
+        # The single attention block will process the concatenated streams
+        self.attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff = HGRNBitMLP(hidden_size=hidden_size, mlp_ratio=mlp_ratio)
         self.norm2_context = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff_context = HGRNBitMLP(hidden_size=hidden_size, mlp_ratio=mlp_ratio)
 
     def forward(self, hidden_states: torch.Tensor, encoder_hidden_states: torch.Tensor, temb: torch.Tensor):
+        # 1. Apply separate AdaLN to each stream
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
         norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(encoder_hidden_states, emb=temb)
 
-        attn_output, context_attn_output = self.attn(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-        )
+        # 2. Concatenate before attention
+        len_c = norm_encoder_hidden_states.shape[1]
+        joint_hidden_states = torch.cat([norm_encoder_hidden_states, norm_hidden_states], dim=1)
 
-        hidden_states = hidden_states + gate_msa.unsqueeze(1) * attn_output
+        # 3. Single attention call on the joint stream
+        attn_output, _, _ = self.attn(joint_hidden_states)
+
+        # 4. Split after attention
+        context_attn_output, attn_output = attn_output.split([len_c, norm_hidden_states.shape[1]], dim=1)
+
+        # 5. Apply residuals and MLPs to each stream independently
+        hidden_states = hidden_states + gate_msa * attn_output
         norm_hidden_states = self.norm2(hidden_states)
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp.unsqueeze(1)) + shift_mlp.unsqueeze(1)
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
         ff_output = self.ff(norm_hidden_states)
-        hidden_states = hidden_states + gate_mlp.unsqueeze(1) * ff_output
+        hidden_states = hidden_states + gate_mlp * ff_output
 
-        encoder_hidden_states = encoder_hidden_states + c_gate_msa.unsqueeze(1) * context_attn_output
+        encoder_hidden_states = encoder_hidden_states + c_gate_msa * context_attn_output
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp.unsqueeze(1)) + c_shift_mlp.unsqueeze(1)
+        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
 
         return hidden_states, encoder_hidden_states
+
 
 class FluxBitSingleBlock(nn.Module):
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
@@ -195,9 +135,9 @@ class FluxBitSingleBlock(nn.Module):
         norm_x, gate = self.norm1(x, emb=c)
         attn_output, _, _ = self.attn(norm_x)
         mlp_output = self.mlp(norm_x)
-        hidden_states = torch.cat([attn_output, mlp_output], dim=2)
-        hidden_states = gate.unsqueeze(1) * self.proj_out(hidden_states)
-        x = residual + hidden_states
+        
+        hidden_states = self.proj_out(torch.cat([attn_output, mlp_output], dim=2))
+        x = residual + gate * hidden_states
         return x
 
 class FinalLayer(nn.Module):
@@ -282,28 +222,18 @@ class MeshDiT(nn.Module):
 
         return output
     
-    # MODIFIED: Un-commented and implemented for inference with Classifier-Free Guidance.
     def forward_with_cfg(self, x, t, encoder_hidden_states, cfg_scale):
         """
         Forward pass with Classifier-Free Guidance.
         """
-        # The input x is duplicated for CFG: [unconditional_latents, conditional_latents]
-        half = x.shape[0] // 2
-        
-        # The unconditional and conditional inputs are processed together
         model_out = self.forward(x, t, encoder_hidden_states)
-        
-        # Split the output back into unconditional and conditional predictions
         e_uncond, e_cond = model_out.chunk(2, dim=0)
-        
-        # Apply guidance
         noise_pred = e_uncond + cfg_scale * (e_cond - e_uncond)
         
         return noise_pred
 
-
 #################################################################################
-#               Embedding Layers (Moved here for better organization)           #
+#               Embedding Layers                                                #
 #################################################################################
 
 class TimestepEmbedder(nn.Module):
@@ -329,7 +259,6 @@ class TimestepEmbedder(nn.Module):
     def forward(self, t):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         return self.mlp(t_freq.to(self.mlp[0].weight.dtype))
-
 
 #################################################################################
 #                                  MeshDiT Configs                              #
