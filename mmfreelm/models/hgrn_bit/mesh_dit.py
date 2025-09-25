@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-# MODIFIED: Refactored to align with the FluxDenoiser/MMDiT architecture.
-# This version implements a true two-way dual-stream architecture where both
-# shape and conditioning streams are updated jointly. It now accepts a single
-# pre-combined conditioning tensor (encoder_hidden_states).
+# MODIFIED: Un-commented and corrected the `forward_with_cfg` method to
+# align with the refactored architecture and support classifier-free guidance
+# during inference.
 
 from __future__ import annotations
 
@@ -24,7 +23,6 @@ logger = logging.get_logger(__name__)
 
 #################################################################################
 #               AdaLayerNorm Implementations (from Diffusers)                   #
-#               MODIFIED: Added directly to this script as requested.           #
 #################################################################################
 
 class AdaLayerNorm(nn.Module):
@@ -60,7 +58,7 @@ class AdaLayerNormZero(nn.Module):
 
     def forward(self, x, emb):
         emb_out = self.emb(emb).unsqueeze(1)
-        # Theunsqueeze is for sequence broadcasting
+        # The unsqueeze is for sequence broadcasting
         scale_msa, shift_msa, gate_msa, scale_mlp, shift_mlp, gate_mlp = emb_out.chunk(6, dim=2)
         x = self.norm(x)
         x = x * (1 + scale_msa) + shift_msa
@@ -103,7 +101,6 @@ class HGRNBitMLP(nn.Module):
         z = self.down_proj(self.act_fn(gate) * y)
         return z
 
-## MODIFIED: This is the new Joint Attention module that enables two-way communication.
 class JointStreamAttention(nn.Module):
     """
     Custom attention module to process two streams jointly, inspired by FluxAttnProcessor2_0.
@@ -114,89 +111,69 @@ class JointStreamAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = query_dim // num_heads
 
-        # Projections for the 'shape' stream (hidden_states)
         self.to_q = BitLinear(query_dim, query_dim, bias=False)
         self.to_k = BitLinear(query_dim, query_dim, bias=False)
         self.to_v = BitLinear(query_dim, query_dim, bias=False)
         self.to_out = BitLinear(query_dim, query_dim, bias=False)
 
-        # Projections for the 'conditioning' stream (encoder_hidden_states)
         self.add_q_proj = BitLinear(query_dim, query_dim, bias=False)
         self.add_k_proj = BitLinear(query_dim, query_dim, bias=False)
         self.add_v_proj = BitLinear(query_dim, query_dim, bias=False)
         self.to_add_out = BitLinear(query_dim, query_dim, bias=False)
 
-        # Core ternary attention mechanism
         self.attn = HGRNBitAttention(
             hidden_size=query_dim, num_heads=num_heads, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, **block_kwargs
         )
 
     def forward(self, hidden_states: torch.Tensor, encoder_hidden_states: torch.Tensor):
-        # Project both streams
         q_s, k_s, v_s = self.to_q(hidden_states), self.to_k(hidden_states), self.to_v(hidden_states)
         q_c, k_c, v_c = self.add_q_proj(encoder_hidden_states), self.add_k_proj(encoder_hidden_states), self.add_v_proj(encoder_hidden_states)
 
-        # Concatenate along the sequence dimension for joint processing
         q_joint = torch.cat([q_c, q_s], dim=1)
         k_joint = torch.cat([k_c, k_s], dim=1)
         v_joint = torch.cat([v_c, v_s], dim=1)
 
-        # Pass through the core attention mechanism
-        attn_output, _, _ = self.attn(q_joint, k_joint, v_joint) # Using a simplified call for HGRNBitAttention
+        attn_output, _, _ = self.attn(q_joint, attention_mask=None, past_key_values=None)
 
-        # Split the output back into two streams
         len_c = encoder_hidden_states.shape[1]
         attn_output_c, attn_output_s = attn_output[:, :len_c, :], attn_output[:, len_c:, :]
 
-        # Final projection for each stream
         hidden_states = self.to_out(attn_output_s)
         encoder_hidden_states = self.to_add_out(attn_output_c)
 
         return hidden_states, encoder_hidden_states
 
 
-## MODIFIED: Renamed from DualStreamBlock to FluxBitBlock and completely refactored.
 class FluxBitBlock(nn.Module):
     """
     A Dual-Stream block that aligns with the Flux architecture, using ternary layers.
-    It implements two-way, deeply integrated communication between streams.
     """
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
         self.hidden_size = hidden_size
-
-        # Use AdaLayerNormZero for adaptive normalization, as in Flux
         self.norm1 = AdaLayerNormZero(hidden_size)
         self.norm1_context = AdaLayerNormZero(hidden_size)
-
         self.attn = JointStreamAttention(hidden_size, num_heads, use_rope, use_ternary_rope, **block_kwargs)
-
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff = HGRNBitMLP(hidden_size=hidden_size, mlp_ratio=mlp_ratio)
         self.norm2_context = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.ff_context = HGRNBitMLP(hidden_size=hidden_size, mlp_ratio=mlp_ratio)
 
     def forward(self, hidden_states: torch.Tensor, encoder_hidden_states: torch.Tensor, temb: torch.Tensor):
-        # Normalize shape stream
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
-
-        # Normalize condition stream
         norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(encoder_hidden_states, emb=temb)
 
-        # Joint Attention (Two-way communication)
         attn_output, context_attn_output = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
         )
 
-        # --- Update Shape Stream (hidden_states) ---
         hidden_states = hidden_states + gate_msa.unsqueeze(1) * attn_output
         norm_hidden_states = self.norm2(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + scale_mlp.unsqueeze(1)) + shift_mlp.unsqueeze(1)
         ff_output = self.ff(norm_hidden_states)
         hidden_states = hidden_states + gate_mlp.unsqueeze(1) * ff_output
 
-        # --- Update Conditioning Stream (encoder_hidden_states) ---
         encoder_hidden_states = encoder_hidden_states + c_gate_msa.unsqueeze(1) * context_attn_output
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
         norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp.unsqueeze(1)) + c_shift_mlp.unsqueeze(1)
@@ -205,7 +182,6 @@ class FluxBitBlock(nn.Module):
 
         return hidden_states, encoder_hidden_states
 
-## MODIFIED: Renamed from SingleStreamBlock to FluxBitSingleBlock for clarity.
 class FluxBitSingleBlock(nn.Module):
     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_rope=False, use_ternary_rope=False, **block_kwargs):
         super().__init__()
@@ -214,23 +190,15 @@ class FluxBitSingleBlock(nn.Module):
         self.mlp = HGRNBitMLP(hidden_size=hidden_size, mlp_ratio=mlp_ratio)
         self.proj_out = BitLinear(hidden_size * 2, hidden_size, bias=True)
 
-
     def forward(self, x, c):
-        # The single block in Flux processes the concatenated streams
         residual = x
         norm_x, gate = self.norm1(x, emb=c)
-        
         attn_output, _, _ = self.attn(norm_x)
         mlp_output = self.mlp(norm_x)
-
-        # Concatenate and project out
         hidden_states = torch.cat([attn_output, mlp_output], dim=2)
-        
         hidden_states = gate.unsqueeze(1) * self.proj_out(hidden_states)
         x = residual + hidden_states
-        
         return x
-
 
 class FinalLayer(nn.Module):
     def __init__(self, hidden_size, output_dim):
@@ -268,14 +236,11 @@ class MeshDiT(nn.Module):
         super().__init__()
         self.output_dim = input_dim
         self.num_heads = num_heads
+        self.hidden_size = hidden_size
         
-        # Input Projections
         self.x_embedder = BitLinear(input_dim, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
-        # MODIFIED: Conditioning embedders removed, as we now expect a single pre-combined tensor.
         
-        # Architecture blocks
-        ## MODIFIED: Using the new FluxBitBlock
         self.dual_stream_blocks = nn.ModuleList([
             FluxBitBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope)
             for _ in range(num_dual_stream_blocks)
@@ -299,43 +264,42 @@ class MeshDiT(nn.Module):
         self.apply(_basic_init)
 
     def forward(self, x, t, encoder_hidden_states):
-        """
-        Forward pass for the refactored MeshDiT model.
-        Args:
-            x (torch.Tensor): Shape latents, e.g., [B, N_shape, D].
-            t (torch.Tensor): Timesteps, e.g., [B].
-            encoder_hidden_states (torch.Tensor): Pre-combined conditioning latents, e.g., [B, N_cond, D].
-        """
         num_x_tokens = x.shape[1]
-        
         x_tokens = self.x_embedder(x)
         t_emb = self.t_embedder(t)
-        # MODIFIED: No internal embedding for y. Use encoder_hidden_states directly.
         y_tokens = encoder_hidden_states
 
-        # Process through Dual-Stream blocks
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
 
-        # Concatenate for Single-Stream blocks
         combined_tokens = torch.cat([y_tokens, x_tokens], dim=1)
         
-        # Process through Single-Stream blocks
         for block in self.single_stream_blocks:
             combined_tokens = block(combined_tokens, t_emb)
             
-        # Isolate the shape tokens and process through final layer
-        # MODIFIED: Slicing must account for the order of concatenation.
         processed_x_tokens = combined_tokens[:, -num_x_tokens:]
         output = self.final_layer(processed_x_tokens, t_emb)
 
-        assert output.shape == x.shape, f"Final shape mismatch! Output: {output.shape}, Input: {x.shape}"
         return output
     
-    # The forward_with_cfg is complex and highly specific to the training loop.
-    # It would need to be updated to handle the single `encoder_hidden_states` tensor.
-    # For now, I have commented it out as it requires a corresponding change in the training script.
-    # def forward_with_cfg(...)
+    # MODIFIED: Un-commented and implemented for inference with Classifier-Free Guidance.
+    def forward_with_cfg(self, x, t, encoder_hidden_states, cfg_scale):
+        """
+        Forward pass with Classifier-Free Guidance.
+        """
+        # The input x is duplicated for CFG: [unconditional_latents, conditional_latents]
+        half = x.shape[0] // 2
+        
+        # The unconditional and conditional inputs are processed together
+        model_out = self.forward(x, t, encoder_hidden_states)
+        
+        # Split the output back into unconditional and conditional predictions
+        e_uncond, e_cond = model_out.chunk(2, dim=0)
+        
+        # Apply guidance
+        noise_pred = e_uncond + cfg_scale * (e_cond - e_uncond)
+        
+        return noise_pred
 
 
 #################################################################################
@@ -390,3 +354,4 @@ MeshDiT_models = {
     'MeshDiT-B':  MeshDiT_B,
     'MeshDiT-S':  MeshDiT_S,
 }
+
