@@ -51,7 +51,6 @@ def modulate(x, shift, scale):
 class HGRNBitMLP(nn.Module):
     """
     A standard MLP block using FusedBitLinear layers and Swish activation.
-    This is a core component for feed-forward networks in the architecture.
     """
     def __init__(self, hidden_size: int, mlp_ratio: float = 4.0, intermediate_size: Optional[int] = None, hidden_act: str = 'swish'):
         super().__init__()
@@ -64,14 +63,12 @@ class HGRNBitMLP(nn.Module):
     def forward(self, x):
         y = self.gate_proj(x)
         gate, y = y.chunk(2, -1)
-        # Applying swish activation
         z = self.down_proj(self.act_fn(gate) * y)
         return z
 
 class TimestepEmbedder(nn.Module):
     """
-    Embeds scalar timesteps into vector representations using sinusoidal embeddings
-    followed by an HGRNBitMLP.
+    Embeds scalar timesteps into vector representations.
     """
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
@@ -105,12 +102,10 @@ class TimestepEmbedder(nn.Module):
 class DecoupledMVHGRNAttention(nn.Module):
     """
     A wrapper around HGRNBitAttention to handle decoupled multi-view and
-    reference image conditioning in a matmul-free way.
+    reference image conditioning.
     """
     def __init__(self, hidden_size: int, num_heads: int, **hgrn_kwargs):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
         self.self_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
         self.mv_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
         self.ref_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
@@ -124,26 +119,22 @@ class DecoupledMVHGRNAttention(nn.Module):
         batch_size = hidden_states.shape[0] // num_views
         seq_len = hidden_states.shape[1]
 
-        # 1. Standard Self-Attention (within each view)
         self_out, _, _ = self.self_attn(hidden_states)
 
-        # 2. Multi-View Consistency Attention (across views)
         mv_in = rearrange(hidden_states, '(b n) l d -> (b l) n d', b=batch_size, n=num_views)
         mv_out, _, _ = self.mv_attn(mv_in)
         mv_out = rearrange(mv_out, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
-        # 3. Reference Image Cross-Attention (if provided)
         if ref_hidden_states is not None:
             ref_out, _, _ = self.ref_attn(ref_hidden_states.repeat_interleave(num_views, dim=0))
             final_out = self_out + mv_out + ref_out
         else:
             final_out = self_out + mv_out
-
         return final_out
 
 class TernaryMVAdapterBlock(nn.Module):
     """
-    A single block of the Ternary MV-Adapter, analogous to a Transformer block.
+    A single block of the Ternary MV-Adapter.
     """
     def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0):
         super().__init__()
@@ -177,7 +168,7 @@ class TernaryMVAdapterBlock(nn.Module):
 
 class SpatialCondAdapter(nn.Module):
     """
-    A lightweight adapter to process spatial conditioning signals like position maps.
+    A lightweight adapter to process spatial conditioning signals.
     """
     def __init__(self, in_channels, hidden_size, depth=3):
         super().__init__()
@@ -234,24 +225,19 @@ class TernaryMVAdapter(nn.Module):
         depth: int = 28,
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
-        cond_channels: int = 3,
-        text_embed_dim: int = 768, # Dimension of incoming text embeddings
+        cond_channels: int = 6,
+        text_embed_dim: int = 768,
         learn_sigma: bool = True,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
-        self.in_channels = in_channels
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
-        self.num_heads = num_heads
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
-
-        # Projection layer for text embeddings to match the model's hidden size
         self.prompt_proj = BitLinear(text_embed_dim, hidden_size, bias=True)
-
         self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, depth=3)
         self.blocks = nn.ModuleList([
             TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
@@ -262,7 +248,6 @@ class TernaryMVAdapter(nn.Module):
     def initialize_weights(self):
         def _basic_init(module):
             if isinstance(module, BitLinear):
-                # Use a more standard initialization for the projection layer
                 if module is self.prompt_proj:
                     nn.init.kaiming_normal_(module.weight, a=math.sqrt(5))
                 else:
@@ -277,7 +262,7 @@ class TernaryMVAdapter(nn.Module):
         c = self.out_channels
         p = self.x_embedder.patch_size[0]
         h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
+        assert h * w == x.shape[1], "Cannot unpatchify if not a square number of tokens."
         x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
         x = torch.einsum('nhwpqc->nchpwq', x)
         imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p))
@@ -295,17 +280,14 @@ class TernaryMVAdapter(nn.Module):
         x_embed = self.x_embedder(x) + self.pos_embed
         t_emb = self.t_embedder(t)
         
-        # Process and project the text embeddings
         raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
-        prompt_emb = self.prompt_proj(raw_prompt_emb) # Project to the correct dimension
+        prompt_emb = self.prompt_proj(raw_prompt_emb)
         
-        # Combine timestep and text embeddings
         c = t_emb + prompt_emb
 
         spatial_features = self.spatial_adapter(control_image_feature) if control_image_feature is not None else [0] * 3
 
         for i, block in enumerate(self.blocks):
-            # Inject spatial features if available and dimensions match
             if control_image_feature is not None and i < len(spatial_features) and x_embed.shape[1] == spatial_features[i].shape[1]:
                 x_embed = x_embed + spatial_features[i]
             x_embed = block(x_embed, c, num_views, ref_hidden_states)
@@ -314,34 +296,72 @@ class TernaryMVAdapter(nn.Module):
         output = self.unpatchify(output)
         return output
 
+#################################################################################
+#              NEW: Scalable Model Variants (S, B, L, XL)                     #
+#################################################################################
+
+def TernaryMVAdapter_XL(**kwargs):
+    """Extra-Large model variant."""
+    return TernaryMVAdapter(depth=28, hidden_size=1152, num_heads=16, **kwargs)
+
+def TernaryMVAdapter_L(**kwargs):
+    """Large model variant."""
+    return TernaryMVAdapter(depth=24, hidden_size=1024, num_heads=16, **kwargs)
+
+def TernaryMVAdapter_B(**kwargs):
+    """Base model variant."""
+    return TernaryMVAdapter(depth=12, hidden_size=768, num_heads=12, **kwargs)
+
+def TernaryMVAdapter_S(**kwargs):
+    """Small model variant."""
+    return TernaryMVAdapter(depth=12, hidden_size=384, num_heads=6, **kwargs)
+
+# Dictionary to easily access the models by name
+TernaryMVAdapter_models = {
+    'TernaryMVAdapter-XL': TernaryMVAdapter_XL,
+    'TernaryMVAdapter-L': TernaryMVAdapter_L,
+    'TernaryMVAdapter-B': TernaryMVAdapter_B,
+    'TernaryMVAdapter-S': TernaryMVAdapter_S,
+}
+
+
 # --- Example Usage ---
 if __name__ == '__main__':
+    # You can now select a model variant
+    model_size = 'S' # Change to 'B', 'L', or 'XL'
+    print(f"--- Testing TernaryMVAdapter-{model_size} ---")
+
+    # Get the model constructor from the dictionary
+    model_constructor = TernaryMVAdapter_models[f'TernaryMVAdapter-{model_size}']
+    
     # Configuration
     BATCH_SIZE = 2
     NUM_VIEWS = 4
     IMG_SIZE = 32
     PATCH_SIZE = 2
     IN_CHANNELS = 4
-    HIDDEN_SIZE = 1152 # Model's internal dimension
-    DEPTH = 12
-    NUM_HEADS = 8
-    COND_CHANNELS = 3
     TEXT_SEQ_LEN = 77
-    TEXT_DIM = 768 # Original dimension from text encoder
+    TEXT_DIM = 768
 
-    model = TernaryMVAdapter(
-        input_size=IMG_SIZE, patch_size=PATCH_SIZE, in_channels=IN_CHANNELS,
-        hidden_size=HIDDEN_SIZE, depth=DEPTH, num_heads=NUM_HEADS,
-        cond_channels=COND_CHANNELS,
-        text_embed_dim=TEXT_DIM # Pass the original text dimension
+    # Instantiate the selected model variant
+    model = model_constructor(
+        input_size=IMG_SIZE, 
+        patch_size=PATCH_SIZE, 
+        in_channels=IN_CHANNELS,
+        text_embed_dim=TEXT_DIM,
+        cond_channels=6
     ).cuda()
+    
     print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters.")
+
+    # Get the model's hidden size for dummy tensors
+    HIDDEN_SIZE = model.blocks[0].attn.self_attn.hidden_size
 
     # Create dummy inputs
     dummy_latents = torch.randn(BATCH_SIZE * NUM_VIEWS, IN_CHANNELS, IMG_SIZE, IMG_SIZE).cuda()
     dummy_timesteps = torch.randint(0, 1000, (BATCH_SIZE * NUM_VIEWS,)).cuda()
     dummy_text_embeds = torch.randn(BATCH_SIZE, TEXT_SEQ_LEN, TEXT_DIM).cuda()
-    dummy_control_image = torch.randn(BATCH_SIZE * NUM_VIEWS, COND_CHANNELS, IMG_SIZE, IMG_SIZE).cuda()
+    dummy_control_image = torch.randn(BATCH_SIZE * NUM_VIEWS, 6, IMG_SIZE, IMG_SIZE).cuda()
     dummy_ref_feats = torch.randn(BATCH_SIZE, (IMG_SIZE // PATCH_SIZE)**2, HIDDEN_SIZE).cuda()
 
     try:
@@ -359,3 +379,4 @@ if __name__ == '__main__':
         print("Output shape is correct.")
     except Exception as e:
         print(f"An error occurred during the forward pass: {e}")
+

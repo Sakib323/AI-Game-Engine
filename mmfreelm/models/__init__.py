@@ -4,7 +4,7 @@ from mmfreelm.models.hgrn_bit import HGRNBitConfig, HGRNBitForCausalLM, HGRNBitM
 from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock, TextEmbedder, FinalLayer, DiT_models
 from mmfreelm.models.hgrn_bit.mesh_dit import MeshDiT_models
 
-from mmfreelm.models.hgrn_bit.texture_dit import TernaryMVAdapter
+from mmfreelm.models.hgrn_bit.texture_dit import TernaryMVAdapter_models
 
 
 
