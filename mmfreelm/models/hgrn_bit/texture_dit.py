@@ -36,11 +36,11 @@ import torch.nn as nn
 from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
 
-from mmfreelm.layers.hgrn_bit import HGRNBitAttention
-from mmfreelm.modules import RMSNorm, LayerNorm
-from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
-from mmfreelm.modules.activations import ACT2FN
-from mmfreelm.modules.layernorm import LayerNorm
+# Make sure these local imports are available in your project directory
+from hgrn_bit import HGRNBitAttention
+from fusedbitnet import FusedBitLinear as BitLinear
+from layernorm import LayerNorm
+from activations import ACT2FN
 
 # --- Self-Contained Helper Functions & Classes ---
 
@@ -235,6 +235,7 @@ class TernaryMVAdapter(nn.Module):
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         cond_channels: int = 3,
+        text_embed_dim: int = 768, # Dimension of incoming text embeddings
         learn_sigma: bool = True,
     ):
         super().__init__()
@@ -247,6 +248,10 @@ class TernaryMVAdapter(nn.Module):
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
+
+        # Projection layer for text embeddings to match the model's hidden size
+        self.prompt_proj = BitLinear(text_embed_dim, hidden_size, bias=True)
+
         self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, depth=3)
         self.blocks = nn.ModuleList([
             TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
@@ -257,7 +262,11 @@ class TernaryMVAdapter(nn.Module):
     def initialize_weights(self):
         def _basic_init(module):
             if isinstance(module, BitLinear):
-                nn.init.xavier_uniform_(module.weight)
+                # Use a more standard initialization for the projection layer
+                if module is self.prompt_proj:
+                    nn.init.kaiming_normal_(module.weight, a=math.sqrt(5))
+                else:
+                    nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
@@ -285,12 +294,18 @@ class TernaryMVAdapter(nn.Module):
     ):
         x_embed = self.x_embedder(x) + self.pos_embed
         t_emb = self.t_embedder(t)
-        prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
+        
+        # Process and project the text embeddings
+        raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
+        prompt_emb = self.prompt_proj(raw_prompt_emb) # Project to the correct dimension
+        
+        # Combine timestep and text embeddings
         c = t_emb + prompt_emb
 
         spatial_features = self.spatial_adapter(control_image_feature) if control_image_feature is not None else [0] * 3
 
         for i, block in enumerate(self.blocks):
+            # Inject spatial features if available and dimensions match
             if control_image_feature is not None and i < len(spatial_features) and x_embed.shape[1] == spatial_features[i].shape[1]:
                 x_embed = x_embed + spatial_features[i]
             x_embed = block(x_embed, c, num_views, ref_hidden_states)
@@ -307,17 +322,18 @@ if __name__ == '__main__':
     IMG_SIZE = 32
     PATCH_SIZE = 2
     IN_CHANNELS = 4
-    HIDDEN_SIZE = 512
+    HIDDEN_SIZE = 1152 # Model's internal dimension
     DEPTH = 12
     NUM_HEADS = 8
     COND_CHANNELS = 3
     TEXT_SEQ_LEN = 77
-    TEXT_DIM = 768
+    TEXT_DIM = 768 # Original dimension from text encoder
 
     model = TernaryMVAdapter(
         input_size=IMG_SIZE, patch_size=PATCH_SIZE, in_channels=IN_CHANNELS,
         hidden_size=HIDDEN_SIZE, depth=DEPTH, num_heads=NUM_HEADS,
-        cond_channels=COND_CHANNELS
+        cond_channels=COND_CHANNELS,
+        text_embed_dim=TEXT_DIM # Pass the original text dimension
     ).cuda()
     print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters.")
 
@@ -343,4 +359,3 @@ if __name__ == '__main__':
         print("Output shape is correct.")
     except Exception as e:
         print(f"An error occurred during the forward pass: {e}")
-
