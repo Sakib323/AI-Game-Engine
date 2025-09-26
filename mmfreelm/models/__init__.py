@@ -9,6 +9,6 @@ from mmfreelm.models.hgrn_bit.texture_dit import TernaryMVAdapter_models
 
 
 __all__ = [
-    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock','FinalLayer','TextEmbedder','FinalLayerSecond','DiT_models','MeshDiT_models','TernaryMVAdapter'
+    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock','FinalLayer','TextEmbedder','FinalLayerSecond','DiT_models','MeshDiT_models','TernaryMVAdapter_models'
 
 ]

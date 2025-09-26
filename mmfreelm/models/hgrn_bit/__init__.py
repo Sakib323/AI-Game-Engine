@@ -28,5 +28,5 @@ __all__ = [
     'FinalLayerSecond',
     'DiT_models',
     'MeshDiT_models',
-    'TernaryMVAdapter'
+    'TernaryMVAdapter_models'
 ]
