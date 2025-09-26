@@ -37,7 +37,7 @@ from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
 
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
-from mmfreelm.modules import RMSNorm, LayerNorm
+from mmfreelm.modules import LayerNorm
 from mmfreelm.modules.activations import ACT2FN
 
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
