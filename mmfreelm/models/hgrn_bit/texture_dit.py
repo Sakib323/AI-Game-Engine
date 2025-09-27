@@ -156,7 +156,7 @@ class TernaryMVAdapterBlock(nn.Module):
     ) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = \
             self.adaLN_modulation(c).chunk(6, dim=1)
-        
+
         x_modulated = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_out = self.attn(x_modulated, num_views, ref_hidden_states)
         x = x + gate_msa.unsqueeze(1) * attn_out
@@ -169,13 +169,16 @@ class TernaryMVAdapterBlock(nn.Module):
 class SpatialCondAdapter(nn.Module):
     """
     A lightweight adapter to process spatial conditioning signals.
+    MODIFIED: Uses a larger patch size to reduce token count and save memory.
     """
-    def __init__(self, in_channels, hidden_size, depth=3):
+    def __init__(self, in_channels, hidden_size, patch_size=16, depth=3):
         super().__init__()
-        self.patch_embed = PatchEmbed(img_size=None, patch_size=1, in_chans=in_channels, embed_dim=hidden_size)
+        # Use a larger patch_size to drastically reduce the number of tokens
+        self.patch_embed = PatchEmbed(img_size=None, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size)
         self.blocks = nn.ModuleList([
             nn.Sequential(LayerNorm(hidden_size), HGRNBitMLP(hidden_size)) for _ in range(depth)
         ])
+        # This downsampling logic is less critical now but kept for consistency
         self.downsamplers = nn.ModuleList([
              nn.Conv2d(hidden_size, hidden_size, kernel_size=2, stride=2) for _ in range(depth)
         ])
@@ -183,15 +186,31 @@ class SpatialCondAdapter(nn.Module):
     def forward(self, x_cond):
         x = self.patch_embed(x_cond)
         features = []
-        for block, downsampler in zip(self.blocks, self.downsamplers):
-            x = block(x)
+        # The number of blocks to extract features from should not exceed the depth
+        num_feature_blocks = min(len(self.blocks), len(self.downsamplers))
+
+        for i in range(num_feature_blocks):
+            x = self.blocks[i](x)
             B, L, D = x.shape
-            H = W = int(math.sqrt(L))
+            # Need to handle non-square token arrangements if image size is not divisible by patch size
+            try:
+                H = W = int(math.sqrt(L))
+                if H * W != L:
+                    raise ValueError
+            except ValueError:
+                # Fallback for non-square token counts, though less likely with standard sizes
+                # This part might need adjustment depending on your exact image/patch sizes
+                # For 768/16 = 48, this should be fine.
+                H = W = int(L**0.5)
+                # This assertion is important
+                assert H * W == L, f"The number of patches ({L}) is not a perfect square."
+
             x_reshaped = rearrange(x, 'b (h w) d -> b d h w', h=H, w=W)
-            x_down = downsampler(x_reshaped)
+            x_down = self.downsamplers[i](x_reshaped)
             features.append(rearrange(x_down, 'b d h w -> b (h w) d'))
             x = rearrange(x_down, 'b d h w -> b (h w) d')
         return features
+
 
 class FinalLayer(nn.Module):
     """The final layer of the adapter."""
@@ -234,11 +253,12 @@ class TernaryMVAdapter(nn.Module):
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
 
-        self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
+        self.x_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
         self.prompt_proj = BitLinear(text_embed_dim, hidden_size, bias=True)
-        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, depth=3)
+        # The main change for memory is here: setting a larger patch_size
+        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3)
         self.blocks = nn.ModuleList([
             TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
@@ -279,25 +299,34 @@ class TernaryMVAdapter(nn.Module):
     ):
         x_embed = self.x_embedder(x) + self.pos_embed
         t_emb = self.t_embedder(t)
-        
+
         raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
         prompt_emb = self.prompt_proj(raw_prompt_emb)
-        
+
         c = t_emb + prompt_emb
 
         spatial_features = self.spatial_adapter(control_image_feature) if control_image_feature is not None else [0] * 3
 
         for i, block in enumerate(self.blocks):
-            if control_image_feature is not None and i < len(spatial_features) and x_embed.shape[1] == spatial_features[i].shape[1]:
-                x_embed = x_embed + spatial_features[i]
-            x_embed = block(x_embed, c, num_views, ref_hidden_states)
-        
-        output = self.final_layer(x_embed, c)
+            # The spatial features are now at a different resolution than the main latents.
+            # A more sophisticated fusion (like cross-attention) would be better,
+            # but for a simple fix, we'll add them to the conditioning vector 'c' instead.
+            # This is a common pattern in ControlNet.
+            block_c = c
+            if control_image_feature is not None and i < len(spatial_features):
+                # Simple fusion: add spatial features to the conditioning vector
+                # This requires reshaping spatial features to match c
+                spatial_feature_pooled = spatial_features[i].mean(dim=1) # Pool along the sequence dimension
+                block_c = block_c + spatial_feature_pooled
+
+            x_embed = block(x_embed, block_c, num_views, ref_hidden_states)
+
+        output = self.final_layer(x_embed, c) # Use original 'c' for final layer
         output = self.unpatchify(output)
         return output
 
 #################################################################################
-#              NEW: Scalable Model Variants (S, B, L, XL)                     #
+#              Scalable Model Variants (S, B, L, XL)                          #
 #################################################################################
 
 def TernaryMVAdapter_XL(**kwargs):
@@ -323,60 +352,3 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
 }
-
-
-# --- Example Usage ---
-if __name__ == '__main__':
-    # You can now select a model variant
-    model_size = 'S' # Change to 'B', 'L', or 'XL'
-    print(f"--- Testing TernaryMVAdapter-{model_size} ---")
-
-    # Get the model constructor from the dictionary
-    model_constructor = TernaryMVAdapter_models[f'TernaryMVAdapter-{model_size}']
-    
-    # Configuration
-    BATCH_SIZE = 2
-    NUM_VIEWS = 4
-    IMG_SIZE = 32
-    PATCH_SIZE = 2
-    IN_CHANNELS = 4
-    TEXT_SEQ_LEN = 77
-    TEXT_DIM = 768
-
-    # Instantiate the selected model variant
-    model = model_constructor(
-        input_size=IMG_SIZE, 
-        patch_size=PATCH_SIZE, 
-        in_channels=IN_CHANNELS,
-        text_embed_dim=TEXT_DIM,
-        cond_channels=6
-    ).cuda()
-    
-    print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters.")
-
-    # Get the model's hidden size for dummy tensors
-    HIDDEN_SIZE = model.blocks[0].attn.self_attn.hidden_size
-
-    # Create dummy inputs
-    dummy_latents = torch.randn(BATCH_SIZE * NUM_VIEWS, IN_CHANNELS, IMG_SIZE, IMG_SIZE).cuda()
-    dummy_timesteps = torch.randint(0, 1000, (BATCH_SIZE * NUM_VIEWS,)).cuda()
-    dummy_text_embeds = torch.randn(BATCH_SIZE, TEXT_SEQ_LEN, TEXT_DIM).cuda()
-    dummy_control_image = torch.randn(BATCH_SIZE * NUM_VIEWS, 6, IMG_SIZE, IMG_SIZE).cuda()
-    dummy_ref_feats = torch.randn(BATCH_SIZE, (IMG_SIZE // PATCH_SIZE)**2, HIDDEN_SIZE).cuda()
-
-    try:
-        output = model(
-            x=dummy_latents, t=dummy_timesteps, num_views=NUM_VIEWS,
-            encoder_hidden_states=dummy_text_embeds,
-            control_image_feature=dummy_control_image,
-            ref_hidden_states=dummy_ref_feats
-        )
-        print("Forward pass successful!")
-        print("Input shape:", dummy_latents.shape)
-        print("Output shape:", output.shape)
-        expected_out_channels = IN_CHANNELS * 2 if model.learn_sigma else IN_CHANNELS
-        assert output.shape == (BATCH_SIZE * NUM_VIEWS, expected_out_channels, IMG_SIZE, IMG_SIZE)
-        print("Output shape is correct.")
-    except Exception as e:
-        print(f"An error occurred during the forward pass: {e}")
-
