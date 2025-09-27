@@ -42,8 +42,6 @@ from mmfreelm.modules.activations import ACT2FN
 
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
-# --- Self-Contained Helper Functions & Classes ---
-
 def modulate(x, shift, scale):
     """Applies affine modulation to the input tensor."""
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -114,7 +112,7 @@ class DecoupledMVHGRNAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         num_views: int,
-        ref_hidden_states: Optional[torch.Tensor] = None
+        ref_tokens: Optional[torch.Tensor] = None # Expects processed tokens now
     ) -> torch.Tensor:
         batch_size = hidden_states.shape[0] // num_views
         seq_len = hidden_states.shape[1]
@@ -125,8 +123,9 @@ class DecoupledMVHGRNAttention(nn.Module):
         mv_out, _, _ = self.mv_attn(mv_in)
         mv_out = rearrange(mv_out, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
-        if ref_hidden_states is not None:
-            ref_out, _, _ = self.ref_attn(ref_hidden_states.repeat_interleave(num_views, dim=0))
+        if ref_tokens is not None:
+            # The ref_tokens are already processed, just need to repeat for each view
+            ref_out, _, _ = self.ref_attn(ref_tokens.repeat_interleave(num_views, dim=0))
             final_out = self_out + mv_out + ref_out
         else:
             final_out = self_out + mv_out
@@ -152,13 +151,14 @@ class TernaryMVAdapterBlock(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor,
         num_views: int,
-        ref_hidden_states: Optional[torch.Tensor] = None
+        ref_tokens: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = \
             self.adaLN_modulation(c).chunk(6, dim=1)
 
         x_modulated = modulate(self.norm1(x), shift_msa, scale_msa)
-        attn_out = self.attn(x_modulated, num_views, ref_hidden_states)
+        # Pass the processed ref_tokens to the attention block
+        attn_out = self.attn(x_modulated, num_views, ref_tokens)
         x = x + gate_msa.unsqueeze(1) * attn_out
 
         x_modulated = modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -173,12 +173,10 @@ class SpatialCondAdapter(nn.Module):
     """
     def __init__(self, in_channels, hidden_size, patch_size=16, depth=3):
         super().__init__()
-        # Use a larger patch_size to drastically reduce the number of tokens
         self.patch_embed = PatchEmbed(img_size=None, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size)
         self.blocks = nn.ModuleList([
             nn.Sequential(LayerNorm(hidden_size), HGRNBitMLP(hidden_size)) for _ in range(depth)
         ])
-        # This downsampling logic is less critical now but kept for consistency
         self.downsamplers = nn.ModuleList([
              nn.Conv2d(hidden_size, hidden_size, kernel_size=2, stride=2) for _ in range(depth)
         ])
@@ -186,24 +184,13 @@ class SpatialCondAdapter(nn.Module):
     def forward(self, x_cond):
         x = self.patch_embed(x_cond)
         features = []
-        # The number of blocks to extract features from should not exceed the depth
         num_feature_blocks = min(len(self.blocks), len(self.downsamplers))
 
         for i in range(num_feature_blocks):
             x = self.blocks[i](x)
             B, L, D = x.shape
-            # Need to handle non-square token arrangements if image size is not divisible by patch size
-            try:
-                H = W = int(math.sqrt(L))
-                if H * W != L:
-                    raise ValueError
-            except ValueError:
-                # Fallback for non-square token counts, though less likely with standard sizes
-                # This part might need adjustment depending on your exact image/patch sizes
-                # For 768/16 = 48, this should be fine.
-                H = W = int(L**0.5)
-                # This assertion is important
-                assert H * W == L, f"The number of patches ({L}) is not a perfect square."
+            H = W = int(math.sqrt(L))
+            assert H * W == L, f"The number of patches ({L}) is not a perfect square."
 
             x_reshaped = rearrange(x, 'b (h w) d -> b d h w', h=H, w=W)
             x_down = self.downsamplers[i](x_reshaped)
@@ -257,7 +244,6 @@ class TernaryMVAdapter(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
         self.prompt_proj = BitLinear(text_embed_dim, hidden_size, bias=True)
-        # The main change for memory is here: setting a larger patch_size
         self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3)
         self.blocks = nn.ModuleList([
             TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
@@ -295,33 +281,37 @@ class TernaryMVAdapter(nn.Module):
         num_views: int,
         encoder_hidden_states: torch.Tensor,
         control_image_feature: Optional[torch.Tensor] = None,
-        ref_hidden_states: Optional[torch.Tensor] = None
+        ref_hidden_states: Optional[torch.Tensor] = None # This is the raw VAE latent
     ):
+        # 1. Process the main noisy latent
         x_embed = self.x_embedder(x) + self.pos_embed
-        t_emb = self.t_embedder(t)
+        
+        # 2. Process the reference image latent (THE FIX IS HERE)
+        ref_tokens = None
+        if ref_hidden_states is not None:
+            # Use the same embedder to patchify and project the reference latent
+            ref_tokens = self.x_embedder(ref_hidden_states) + self.pos_embed
 
+        # 3. Process time and text embeddings
+        t_emb = self.t_embedder(t)
         raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
         prompt_emb = self.prompt_proj(raw_prompt_emb)
-
         c = t_emb + prompt_emb
 
+        # 4. Process spatial control features
         spatial_features = self.spatial_adapter(control_image_feature) if control_image_feature is not None else [0] * 3
 
+        # 5. Run through the main blocks
         for i, block in enumerate(self.blocks):
-            # The spatial features are now at a different resolution than the main latents.
-            # A more sophisticated fusion (like cross-attention) would be better,
-            # but for a simple fix, we'll add them to the conditioning vector 'c' instead.
-            # This is a common pattern in ControlNet.
             block_c = c
             if control_image_feature is not None and i < len(spatial_features):
-                # Simple fusion: add spatial features to the conditioning vector
-                # This requires reshaping spatial features to match c
-                spatial_feature_pooled = spatial_features[i].mean(dim=1) # Pool along the sequence dimension
+                spatial_feature_pooled = spatial_features[i].mean(dim=1)
                 block_c = block_c + spatial_feature_pooled
 
-            x_embed = block(x_embed, block_c, num_views, ref_hidden_states)
+            # Pass the correctly processed ref_tokens to the block
+            x_embed = block(x_embed, block_c, num_views, ref_tokens)
 
-        output = self.final_layer(x_embed, c) # Use original 'c' for final layer
+        output = self.final_layer(x_embed, c)
         output = self.unpatchify(output)
         return output
 
@@ -352,3 +342,4 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
 }
+
