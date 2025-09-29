@@ -5,10 +5,11 @@ from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock, Tex
 from mmfreelm.models.hgrn_bit.mesh_dit import MeshDiT_models
 
 from mmfreelm.models.hgrn_bit.texture_dit import TernaryMVAdapter_models
+from mmfreelm.models.hgrn_bit.animation import AnimDiT_models
 
 
 
 __all__ = [
-    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock','FinalLayer','TextEmbedder','FinalLayerSecond','DiT_models','MeshDiT_models','TernaryMVAdapter_models'
+    'HGRNBitConfig', 'HGRNBitForCausalLM', 'HGRNBitModel','TimestepEmbedder','DiTBlock','FinalLayer','TextEmbedder','FinalLayerSecond','DiT_models','MeshDiT_models','TernaryMVAdapter_models','AnimDiT_models'
 
 ]
