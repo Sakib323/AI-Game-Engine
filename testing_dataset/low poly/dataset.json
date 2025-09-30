@@ -1,0 +1,402 @@
+{
+  "2cv_orangina_truck.glb": {
+    "category": "vehicle",
+    "make": "Citroën",
+    "model": "2CV Orangina Truck",
+    "year": null,
+    "description": "A low-poly model of a Citroën 2CV truck, branded with the Orangina logo. Optimized for game environments.",
+    "tags": ["truck", "vehicle", "low-poly", "citroen", "2cv"]
+  },
+  "Low_Poly_Chair_to_go_with_the_table.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Simple Chair",
+    "year": null,
+    "description": "A simple low-poly chair, designed to accompany a table asset in a game or stylized scene.",
+    "tags": ["chair", "furniture", "low-poly", "game asset"]
+  },
+  "ak-47_-_low_poly.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A low-polygon version of the iconic AK-47 assault rifle, suitable for use in video games.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly", "firearm"]
+  },
+  "ak47_gun.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A low-poly 3D model of an AK-47 firearm, optimized for real-time rendering.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly", "gun"]
+  },
+  "ak47_low_poly.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A classic AK-47 assault rifle rendered in a low-poly style for performance-critical applications.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly"]
+  },
+  "chair_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Chair",
+    "year": null,
+    "description": "A generic, low-polygon chair model suitable for background set dressing in games and simulations.",
+    "tags": ["chair", "furniture", "low-poly", "seating"]
+  },
+  "coffee_table_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Coffee Table",
+    "year": null,
+    "description": "A simple low-poly coffee table, ideal for furnishing virtual living room or office spaces.",
+    "tags": ["table", "furniture", "low-poly", "coffee table"]
+  },
+  "helicopter.glb": {
+    "category": "helicopter",
+    "make": "",
+    "model": "Helicopter",
+    "year": null,
+    "description": "A generic, low-poly helicopter model, suitable for stylized games or background aerial scenes.",
+    "tags": ["helicopter", "vehicle", "aircraft", "low-poly"]
+  },
+  "helicopter_-_low_poly.glb": {
+    "category": "helicopter",
+    "make": "",
+    "model": "Helicopter",
+    "year": null,
+    "description": "A low-polygon helicopter designed for optimized performance in real-time applications.",
+    "tags": ["helicopter", "vehicle", "low-poly", "aircraft"]
+  },
+  "low-poly_glass_table.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Glass Table",
+    "year": null,
+    "description": "A modern glass table created in a low-poly style, perfect for contemporary interior scenes.",
+    "tags": ["table", "furniture", "low-poly", "glass"]
+  },
+  "low-poly_kalash_ak47.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A low-poly rendition of the Kalashnikov AK-47, optimized as a game-ready weapon asset.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly", "kalashnikov"]
+  },
+  "low-poly_stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Stool",
+    "year": null,
+    "description": "A basic low-poly stool, a versatile prop for populating various game environments like bars or workshops.",
+    "tags": ["stool", "furniture", "low-poly", "seating"]
+  },
+  "low-poly_tank.glb": {
+    "category": "tank",
+    "make": "",
+    "model": "Generic Tank",
+    "year": null,
+    "description": "A generic low-polygon main battle tank, designed for stylized military or combat games.",
+    "tags": ["tank", "military", "vehicle", "low-poly"]
+  },
+  "low_poly_ak47.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A game-ready, low-poly version of the AK-47 rifle, balancing detail and performance.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly"]
+  },
+  "low_poly_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Chair",
+    "year": null,
+    "description": "A simple low-poly chair asset, useful for populating architectural visualizations or game levels.",
+    "tags": ["chair", "furniture", "low-poly"]
+  },
+  "low_poly_chair_white.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "White Chair",
+    "year": null,
+    "description": "A clean, white-textured low-poly chair, suitable for modern or minimalist scenes.",
+    "tags": ["chair", "furniture", "low-poly", "modern"]
+  },
+  "low_poly_dining_room_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Dining Chair",
+    "year": null,
+    "description": "A low-poly dining chair, designed to be part of a dining room set in a game or virtual environment.",
+    "tags": ["chair", "furniture", "low-poly", "dining"]
+  },
+  "low_poly_gun_ak47.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "An AK-47 gun model with a low polygon count, ready for first-person shooter or action game implementation.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly", "gun"]
+  },
+  "low_poly_helicopter.glb": {
+    "category": "helicopter",
+    "make": "",
+    "model": "Helicopter",
+    "year": null,
+    "description": "A stylized low-poly helicopter, perfect for mobile games or scenes requiring an abstract aesthetic.",
+    "tags": ["helicopter", "vehicle", "low-poly", "aircraft", "stylized"]
+  },
+  "low_poly_military_truck.glb": {
+    "category": "vehicle",
+    "make": "",
+    "model": "Military Truck",
+    "year": null,
+    "description": "A low-poly military truck, ideal as a transport vehicle prop in a war-themed game.",
+    "tags": ["truck", "vehicle", "military", "low-poly"]
+  },
+  "low_poly_office_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Office Chair",
+    "year": null,
+    "description": "An ergonomic office chair modeled in a low-poly style for populating virtual office environments.",
+    "tags": ["chair", "furniture", "low-poly", "office"]
+  },
+  "low_poly_school_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "School Chair",
+    "year": null,
+    "description": "A low-polygon model of a typical school chair, perfect for classroom scenes in games or animations.",
+    "tags": ["chair", "furniture", "low-poly", "school"]
+  },
+  "low_poly_side_table.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Side Table",
+    "year": null,
+    "description": "A small, low-poly side table or end table, a versatile furniture prop for interior design.",
+    "tags": ["table", "furniture", "low-poly", "side table"]
+  },
+  "low_poly_tank_.glb": {
+    "category": "tank",
+    "make": "",
+    "model": "Generic Tank",
+    "year": null,
+    "description": "A variation of a low-poly tank model, suitable for creating a diverse army in a strategy game.",
+    "tags": ["tank", "military", "vehicle", "low-poly", "armored"]
+  },
+  "low_poly_truck_tank.glb": {
+    "category": "vehicle",
+    "make": "",
+    "model": "Tanker Truck",
+    "year": null,
+    "description": "A low-poly tanker truck, designed to transport liquids in a game environment.",
+    "tags": ["truck", "vehicle", "tanker", "low-poly"]
+  },
+  "medieval_stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Medieval Stool",
+    "year": null,
+    "description": "A low-poly stool with a medieval or fantasy design, crafted from rough-hewn wood.",
+    "tags": ["stool", "furniture", "low-poly", "medieval", "fantasy"]
+  },
+  "old_metal_table_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Metal Table",
+    "year": null,
+    "description": "A weathered and old metal table in a low-poly style, ideal for abandoned or industrial settings.",
+    "tags": ["table", "furniture", "low-poly", "old", "metal"]
+  },
+  "old_wooden_chair_low-poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Wooden Chair",
+    "year": null,
+    "description": "A low-poly model of an old, worn wooden chair, adding a sense of history and decay to a scene.",
+    "tags": ["chair", "furniture", "low-poly", "old", "wooden"]
+  },
+  "old_wooden_stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Old Wooden Stool",
+    "year": null,
+    "description": "A simple, old wooden stool with a low-poly mesh, suitable for rustic or historical environments.",
+    "tags": ["stool", "furniture", "low-poly", "old", "wooden"]
+  },
+  "panzer_iii_low-poly_tank.glb": {
+    "category": "tank",
+    "make": "Panzer",
+    "model": "Panzer III",
+    "year": null,
+    "description": "A low-polygon model of the German Panzer III, a medium tank used during World War II.",
+    "tags": ["tank", "military", "low-poly", "panzer", "historic", "ww2"]
+  },
+  "park_table_-_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Park Table",
+    "year": null,
+    "description": "A low-poly park table, often found in outdoor public spaces, designed for game environments.",
+    "tags": ["table", "furniture", "low-poly", "outdoor", "park"]
+  },
+  "picnic_table_-_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Picnic Table",
+    "year": null,
+    "description": "A classic wooden picnic table in a low-poly style, perfect for outdoor or park scenes.",
+    "tags": ["table", "furniture", "low-poly", "picnic", "outdoor"]
+  },
+  "picnic_table_low-poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Picnic Table",
+    "year": null,
+    "description": "A game-ready low-poly picnic table asset, optimized for real-time rendering in exterior environments.",
+    "tags": ["table", "furniture", "low-poly", "picnic"]
+  },
+  "simple_low-poly_ak47_gun.glb": {
+    "category": "weapon",
+    "make": "Kalashnikov",
+    "model": "AK-47",
+    "year": null,
+    "description": "A very simple, low-poly model of an AK-47 gun, designed for maximum performance or a highly stylized look.",
+    "tags": ["weapon", "rifle", "ak-47", "low-poly", "simple"]
+  },
+  "simple_low-poly_stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Simple Stool",
+    "year": null,
+    "description": "A minimalist low-poly stool, featuring a very basic design for background asset use.",
+    "tags": ["stool", "furniture", "low-poly", "simple"]
+  },
+  "simple_table_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Simple Table",
+    "year": null,
+    "description": "A basic, four-legged table in a low-poly style, a fundamental asset for any interior scene.",
+    "tags": ["table", "furniture", "low-poly", "simple"]
+  },
+  "stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Stool",
+    "year": null,
+    "description": "A generic low-poly stool, a common prop for a variety of game settings.",
+    "tags": ["stool", "furniture", "low-poly"]
+  },
+  "stool_low.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Stool",
+    "year": null,
+    "description": "A low-poly stool asset, optimized for performance with a reduced polygon count.",
+    "tags": ["stool", "furniture", "low-poly", "seating"]
+  },
+  "stool_wood.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "A low-poly wooden stool, featuring a simple wood texture and design.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  },
+  "stool_wooden.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "A low-poly stool made of wood, a versatile prop for interior scenes.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  },
+  "stool_wooden_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "A game-ready wooden stool with a low-poly mesh, perfect for stylized or performance-heavy projects.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  },
+  "stylized_low_poly_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Stylized Chair",
+    "year": null,
+    "description": "A low-poly chair with a distinct, non-realistic stylized art style, ideal for cartoon or fantasy games.",
+    "tags": ["chair", "furniture", "low-poly", "stylized", "cartoon"]
+  },
+  "stylized_old_medieval_chair_3d_model_low_poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Stylized Medieval Chair",
+    "year": null,
+    "description": "An old, stylized medieval chair in a low-poly format, perfect for a fantasy tavern or castle.",
+    "tags": ["chair", "furniture", "low-poly", "stylized", "medieval", "fantasy"]
+  },
+  "t-34_low-poly_tank.glb": {
+    "category": "tank",
+    "make": "T-34",
+    "model": "T-34",
+    "year": null,
+    "description": "A low-poly representation of the Soviet T-34, one of the most produced and influential tanks of World War II.",
+    "tags": ["tank", "military", "low-poly", "t-34", "soviet", "ww2"]
+  },
+  "ultra_low_poly_wooden_table__chairs_set.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Table and Chairs Set",
+    "year": null,
+    "description": "An ultra-low-poly set containing a wooden table and chairs, highly optimized for mobile games or distant background objects.",
+    "tags": ["furniture", "low-poly", "table", "chair", "set"]
+  },
+  "very_low_poly_table.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Table",
+    "year": null,
+    "description": "A table with a very low polygon count, designed for situations where performance is the highest priority.",
+    "tags": ["table", "furniture", "low-poly", "optimized"]
+  },
+  "wooden_low_poly_chair.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Chair",
+    "year": null,
+    "description": "A standard wooden chair created with a low-poly mesh, suitable for a wide range of game interiors.",
+    "tags": ["chair", "furniture", "low-poly", "wooden"]
+  },
+  "wooden_stool.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "A generic low-poly stool made from wood, suitable for rustic or simple interior scenes.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  },
+  "wooden_stool_low-poly.glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "A low-polygon wooden stool, designed as a game-ready asset for performance-conscious projects.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  },
+  "wooden_stool_low_poly (1).glb": {
+    "category": "furniture",
+    "make": "",
+    "model": "Wooden Stool",
+    "year": null,
+    "description": "Another variation of a low-poly wooden stool, providing variety for scene composition.",
+    "tags": ["stool", "furniture", "low-poly", "wooden"]
+  }
+}
