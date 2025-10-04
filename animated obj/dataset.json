@@ -1,0 +1,43 @@
+{
+  "burning_torch_3.glb": {
+    "category": "Light source",
+    "make": "Medieval",
+    "model": "Medieval Burning Torch",
+    "year": null,
+    "description": "A detailed 3D model of a burning torch featuring animated flames and realistic lighting effects. The model includes a wooden handle with a metal holder, and a dynamic fire animation for added realism.",
+    "tags": ["torch", "fire", "light-source", "flame", "prop"]
+  },
+  "burning_torch.glb": {
+    "category": "Light source",
+    "make": "Medieval",
+    "model": "Medieval Burning Torch",
+    "year": null,
+    "description": "A highly detailed 3D model of a burning torch with animated flames and realistic lighting effects. It features a wooden handle with a metal holder and includes a dynamic fire animation that enhances visual realism.",
+    "tags": ["torch", "burning", "flame", "light", "prop"]
+  },
+  "dirty_car_061220.glb": {
+    "category": "Light source",
+    "make": "Medieval",
+    "model": "Medieval Burning Torch",
+    "year": null,
+    "description": "A dirty old car driving forward with animated wheels",
+    "tags": ["torch", "burning", "flame", "light", "prop"]
+  },
+  "low-poly_cartoon_style_car_01.glb": {
+    "category": "Light source",
+    "make": "Medieval",
+    "model": "Medieval Burning Torch",
+    "year": null,
+    "description": "A car is breaking down into pices and flying away",
+    "tags": ["torch", "burning", "flame", "light", "prop"]
+  },
+    "low-poly_cartoon_style_car_03.glb": {
+    "category": "Light source",
+    "make": "Medieval",
+    "model": "Medieval Burning Torch",
+    "year": null,
+    "description": "A highly detailed 3D model of a burning torch with animated flames and realistic lighting effects. It features a wooden handle with a metal holder and includes a dynamic fire animation that enhances visual realism.",
+    "tags": ["torch", "burning", "flame", "light", "prop"]
+  }
+
+}
