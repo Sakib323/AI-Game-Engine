@@ -1,3 +1,5 @@
+# texture_dit.py
+
 # -*- coding: utf-8 -*-
 """
 Ternary MV-Adapter: A Matmul-Free Multi-View Diffusion Adapter with Ternary Weights.
@@ -39,8 +41,8 @@ from timm.models.vision_transformer import PatchEmbed
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import LayerNorm
 from mmfreelm.modules.activations import ACT2FN
-#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
-from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
+from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
 
 def modulate(x, shift, scale):
     """Applies affine modulation to the input tensor."""
@@ -50,12 +52,13 @@ class HGRNBitMLP(nn.Module):
     """
     A standard MLP block using FusedBitLinear layers and Swish activation.
     """
-    def __init__(self, hidden_size: int, mlp_ratio: float = 4.0, intermediate_size: Optional[int] = None, hidden_act: str = 'swish'):
+    def __init__(self, hidden_size: int, mlp_ratio: float = 4.0, intermediate_size: Optional[int] = None, hidden_act: str = 'swish', full_precision: bool = False):
         super().__init__()
         if intermediate_size is None:
             intermediate_size = int(hidden_size * mlp_ratio)
-        self.gate_proj = BitLinear(hidden_size, intermediate_size * 2, bias=False)
-        self.down_proj = BitLinear(intermediate_size, hidden_size, bias=False)
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        self.gate_proj = BitLinearCls(hidden_size, intermediate_size * 2, bias=False)
+        self.down_proj = BitLinearCls(intermediate_size, hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
@@ -68,12 +71,13 @@ class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
     """
-    def __init__(self, hidden_size, frequency_embedding_size=256):
+    def __init__(self, hidden_size, frequency_embedding_size=256, full_precision: bool = False):
         super().__init__()
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
         self.mlp = nn.Sequential(
-            BitLinear(frequency_embedding_size, hidden_size, bias=True),
+            BitLinearCls(frequency_embedding_size, hidden_size, bias=True),
             nn.SiLU(),
-            BitLinear(hidden_size, hidden_size, bias=True),
+            BitLinearCls(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
 
@@ -102,17 +106,17 @@ class DecoupledMVHGRNAttention(nn.Module):
     A wrapper around HGRNBitAttention to handle decoupled multi-view and
     reference image conditioning.
     """
-    def __init__(self, hidden_size: int, num_heads: int, **hgrn_kwargs):
+    def __init__(self, hidden_size: int, num_heads: int, full_precision: bool = False, **hgrn_kwargs):
         super().__init__()
-        self.self_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
-        self.mv_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
-        self.ref_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, **hgrn_kwargs)
+        self.self_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, full_precision=full_precision, **hgrn_kwargs)
+        self.mv_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, full_precision=full_precision, **hgrn_kwargs)
+        self.ref_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, full_precision=full_precision, **hgrn_kwargs)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         num_views: int,
-        ref_tokens: Optional[torch.Tensor] = None # Expects processed tokens now
+        ref_tokens: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         batch_size = hidden_states.shape[0] // num_views
         seq_len = hidden_states.shape[1]
@@ -124,7 +128,6 @@ class DecoupledMVHGRNAttention(nn.Module):
         mv_out = rearrange(mv_out, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
         if ref_tokens is not None:
-            # The ref_tokens are already processed, just need to repeat for each view
             ref_out, _, _ = self.ref_attn(ref_tokens.repeat_interleave(num_views, dim=0))
             final_out = self_out + mv_out + ref_out
         else:
@@ -135,15 +138,16 @@ class TernaryMVAdapterBlock(nn.Module):
     """
     A single block of the Ternary MV-Adapter.
     """
-    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0):
+    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, full_precision: bool = False):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = DecoupledMVHGRNAttention(hidden_size, num_heads)
+        self.attn = DecoupledMVHGRNAttention(hidden_size, num_heads, full_precision=full_precision)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.mlp = HGRNBitMLP(hidden_size, mlp_ratio=mlp_ratio)
+        self.mlp = HGRNBitMLP(hidden_size, mlp_ratio=mlp_ratio, full_precision=full_precision)
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
-            BitLinear(hidden_size, 6 * hidden_size, bias=True)
+            BitLinearCls(hidden_size, 6 * hidden_size, bias=True)
         )
 
     def forward(
@@ -157,25 +161,24 @@ class TernaryMVAdapterBlock(nn.Module):
             self.adaLN_modulation(c).chunk(6, dim=1)
 
         x_modulated = modulate(self.norm1(x), shift_msa, scale_msa)
-        # Pass the processed ref_tokens to the attention block
         attn_out = self.attn(x_modulated, num_views, ref_tokens)
         x = x + gate_msa.unsqueeze(1) * attn_out
 
         x_modulated = modulate(self.norm2(x), shift_mlp, scale_mlp)
         mlp_out = self.mlp(x_modulated)
         x = x + gate_mlp.unsqueeze(1) * mlp_out
+
         return x
 
 class SpatialCondAdapter(nn.Module):
     """
-    A lightweight adapter to process spatial conditioning signals.
-    MODIFIED: Uses a larger patch size to reduce token count and save memory.
+    A lightweight adapter for spatial conditioning.
     """
-    def __init__(self, in_channels, hidden_size, patch_size=16, depth=3):
+    def __init__(self, in_channels: int, hidden_size: int, patch_size=16, depth=3, full_precision: bool = False):
         super().__init__()
         self.patch_embed = PatchEmbed(img_size=None, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size)
         self.blocks = nn.ModuleList([
-            nn.Sequential(LayerNorm(hidden_size), HGRNBitMLP(hidden_size)) for _ in range(depth)
+            nn.Sequential(LayerNorm(hidden_size), HGRNBitMLP(hidden_size, full_precision=full_precision)) for _ in range(depth)
         ])
         self.downsamplers = nn.ModuleList([
              nn.Conv2d(hidden_size, hidden_size, kernel_size=2, stride=2) for _ in range(depth)
@@ -201,13 +204,14 @@ class SpatialCondAdapter(nn.Module):
 
 class FinalLayer(nn.Module):
     """The final layer of the adapter."""
-    def __init__(self, hidden_size, patch_size, out_channels):
+    def __init__(self, hidden_size, patch_size, out_channels, full_precision: bool = False):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = BitLinear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        self.linear = BitLinearCls(hidden_size, patch_size * patch_size * out_channels, bias=True)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
-            BitLinear(hidden_size, 2 * hidden_size, bias=True)
+            BitLinearCls(hidden_size, 2 * hidden_size, bias=True)
         )
 
     def forward(self, x, c):
@@ -234,30 +238,30 @@ class TernaryMVAdapter(nn.Module):
         cond_channels: int = 6,
         text_embed_dim: int = 768,
         learn_sigma: bool = True,
+        full_precision: bool = False,  # New parameter
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
 
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+
         self.x_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)
-        self.t_embedder = TimestepEmbedder(hidden_size)
+        self.t_embedder = TimestepEmbedder(hidden_size, full_precision=full_precision)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
-        self.prompt_proj = BitLinear(text_embed_dim, hidden_size, bias=True)
-        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3)
+        self.prompt_proj = BitLinearCls(text_embed_dim, hidden_size, bias=True)
+        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3, full_precision=full_precision)
         self.blocks = nn.ModuleList([
-            TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+            TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, full_precision=full_precision) for _ in range(depth)
         ])
-        self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
+        self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels, full_precision=full_precision)
         self.initialize_weights()
 
     def initialize_weights(self):
         def _basic_init(module):
-            if isinstance(module, BitLinear):
-                if module is self.prompt_proj:
-                    nn.init.kaiming_normal_(module.weight, a=math.sqrt(5))
-                else:
-                    nn.init.xavier_uniform_(module.weight)
+            if isinstance(module, (StandardBitLinear, FusedBitLinear)):
+                torch.nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
@@ -342,4 +346,3 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
 }
-

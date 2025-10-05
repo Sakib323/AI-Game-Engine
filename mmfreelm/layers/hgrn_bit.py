@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 # "HGRN2: Gated Linear RNNs with State Expansion"[https://arxiv.org/abs/2404.07904]
 
 from __future__ import annotations
@@ -35,14 +34,14 @@ class HGRNBitAttention(nn.Module):
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
         full_precision: bool = False,  # New parameter
-    ) -> HGRNAttention:
+    ) -> None:
         super().__init__()
-        if rotary_embedding:
+        if rotary_embeddings:  # Fixed typo: changed rotary_embedding to rotary_embeddings
             print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
 
         self.mode = mode
         self.hidden_size = hidden_size
-        self.num_heads = num_heads
+        self.num_heads = num_heads if num_heads is not None else hidden_size // 64  # Default num_heads
         self.expand_ratio = expand_ratio
         self.input_dim = int(hidden_size * expand_ratio)
         self.head_dim = self.input_dim // self.num_heads
@@ -54,8 +53,8 @@ class HGRNBitAttention(nn.Module):
 
         self.layer_idx = layer_idx
 
-        assert mode in ['fused_recurrent'], f"Not suppoerted mode `{mode}`."
-        assert self.hidden_size % num_heads == 0, f"hidden size must be divisible by num_heads of {num_heads}"
+        assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
+        assert self.input_dim % self.num_heads == 0, f"input_dim must be divisible by num_heads of {self.num_heads}"
 
         # Select the appropriate BitLinear class based on full_precision
         BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
@@ -76,8 +75,8 @@ class HGRNBitAttention(nn.Module):
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
         self.o_proj = BitLinearCls(self.input_dim, hidden_size, bias=False)
 
-        self.rotary_embedding = rotary_embedding
-        if self.rotary_embedding:
+        self.rotary_embeddings = rotary_embeddings
+        if self.rotary_embeddings:
             self.rotary_emb = RotaryEmbedding(
                 dim=self.head_dim,
                 max_position_embeddings=2048,
@@ -139,7 +138,7 @@ class HGRNBitAttention(nn.Module):
         i = rearrange(i, 'b l (h d) -> b h l d', h=self.num_heads)
         f = rearrange(f, 'b l (h d) -> b h l d', h=self.num_heads)
         
-        if self.rotary_embedding:
+        if self.rotary_embeddings:
             seq_len = i.shape[2]
             cos, sin = self.rotary_emb(i, seq_len=seq_len)
             i, f = apply_rotary_pos_emb(i, f, cos, sin)

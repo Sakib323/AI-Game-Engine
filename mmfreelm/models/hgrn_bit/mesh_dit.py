@@ -1,3 +1,5 @@
+# mesh_dit.py
+
 # -*- coding: utf-8 -*-
 # Adapted for 3D Mesh Latent Generation.
 # This version implements a dual-stream architecture inspired by MMDiT.
@@ -16,7 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.activations import ACT2FN
 from transformers.utils import logging
-#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 # The HGRNBitAttention class handles the RoPE implementation internally.
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
@@ -42,7 +43,8 @@ class HGRNBitMLP(nn.Module):
         hidden_size: int,
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
-        hidden_act: str = 'swish'
+        hidden_act: str = 'swish',
+        full_precision: bool = False
     ):
         super().__init__()
 
@@ -53,10 +55,10 @@ class HGRNBitMLP(nn.Module):
             intermediate_size = int(hidden_size * hidden_ratio * 2 / 3)
             intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
 
-        BitLinear = FusedBitLinear  # Default to fused, but this class isn't directly affected; kept for consistency
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
 
-        self.gate_proj = BitLinear(self.hidden_size, intermediate_size * 2, bias=False)
-        self.down_proj = BitLinear(intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj = BitLinearCls(self.hidden_size, intermediate_size * 2, bias=False)
+        self.down_proj = BitLinearCls(intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
@@ -203,18 +205,18 @@ class CrossAttention(nn.Module):
     """
     A standard cross-attention layer, built with BitLinear for quantization.
     """
-    def __init__(self, dim, num_heads, head_dim):
+    def __init__(self, dim, num_heads, head_dim, full_precision: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.scale = head_dim ** -0.5
 
-        BitLinear = FusedBitLinear  # Default, but can be overridden in parent
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
 
-        self.to_q = BitLinear(dim, num_heads * head_dim, bias=False)
-        self.to_k = BitLinear(dim, num_heads * head_dim, bias=False)
-        self.to_v = BitLinear(dim, num_heads * head_dim, bias=False)
-        self.to_out = BitLinear(num_heads * head_dim, dim, bias=False)
+        self.to_q = BitLinearCls(dim, num_heads * head_dim, bias=False)
+        self.to_k = BitLinearCls(dim, num_heads * head_dim, bias=False)
+        self.to_v = BitLinearCls(dim, num_heads * head_dim, bias=False)
+        self.to_out = BitLinearCls(num_heads * head_dim, dim, bias=False)
 
     def forward(self, x, context):
         b, n, _, h = *x.shape, self.num_heads
@@ -271,10 +273,10 @@ class DualStreamBlock(nn.Module):
         self.attn_x = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
         self.attn_c = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
         
-        self.cross_attn = CrossAttention(hidden_size, num_heads, hidden_size // num_heads)
+        self.cross_attn = CrossAttention(hidden_size, num_heads, hidden_size // num_heads, full_precision=full_precision)
         
-        self.mlp = HGRNBitMLP(hidden_size, mlp_ratio)
-        self.mlp_c = HGRNBitMLP(hidden_size, mlp_ratio)
+        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
+        self.mlp_c = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
         
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 12 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
@@ -284,7 +286,7 @@ class DualStreamBlock(nn.Module):
         
         # Shape stream
         modulated_x = modulate(self.norm1(x), shift_msa_x, scale_msa_x)
-        attn_x = self.attn_x(modulated_x)
+        attn_x, _, _ = self.attn_x(modulated_x)
         x = x + gate_msa_x.unsqueeze(1) * attn_x
         
         modulated_x = modulate(self.norm2(x), shift_mlp_x, scale_mlp_x)
@@ -293,7 +295,7 @@ class DualStreamBlock(nn.Module):
         
         # Conditioning stream
         modulated_c = modulate(self.norm3(c), shift_msa_c, scale_msa_c)
-        attn_c = self.attn_c(modulated_c)
+        attn_c, _, _ = self.attn_c(modulated_c)
         c = c + gate_msa_c.unsqueeze(1) * attn_c
         
         modulated_c = modulate(self.norm4(c), shift_mlp_c, scale_mlp_c)
@@ -316,7 +318,7 @@ class SingleStreamBlock(nn.Module):
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         
         self.attn = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
-        self.mlp = HGRNBitMLP(hidden_size, mlp_ratio)
+        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
         
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
@@ -339,10 +341,11 @@ class FinalLayer(nn.Module):
     """
     The final layer of the MeshDiT.
     """
-    def __init__(self, hidden_size, output_dim, mlp_ratio=4.0):
+    def __init__(self, hidden_size, output_dim, mlp_ratio=4.0, full_precision: bool = False):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = FusedBitLinear(hidden_size, output_dim, bias=True)  # Using Fused by default, but can be adjusted
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        self.linear = BitLinearCls(hidden_size, output_dim, bias=True)
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 2 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, c):
@@ -411,7 +414,7 @@ class MeshDiT(nn.Module):
             for _ in range(num_single_stream_blocks)
         ])
         
-        self.final_layer = FinalLayer(hidden_size, self.output_dim, mlp_ratio=mlp_ratio)
+        self.final_layer = FinalLayer(hidden_size, self.output_dim, mlp_ratio=mlp_ratio, full_precision=full_precision)
         
         self.initialize_weights()
         
