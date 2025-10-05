@@ -15,8 +15,8 @@ from mmfreelm.modules import FusedRMSNormSwishGate, ShortConvolution
 from mmfreelm.modules.activations import swiglu
 from mmfreelm.ops.hgrn.recurrent_fuse import fused_recurrent_hgrn
 from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rotary_pos_emb
-#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
-from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
+from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
 
 class HGRNBitAttention(nn.Module):
     def __init__(
@@ -34,9 +34,10 @@ class HGRNBitAttention(nn.Module):
         rotary_embeddings: bool = False, 
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
+        full_precision: bool = False,  # New parameter
     ) -> HGRNAttention:
         super().__init__()
-        if rotary_embeddings:
+        if rotary_embedding:
             print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
 
         self.mode = mode
@@ -56,9 +57,12 @@ class HGRNBitAttention(nn.Module):
         assert mode in ['fused_recurrent'], f"Not suppoerted mode `{mode}`."
         assert self.hidden_size % num_heads == 0, f"hidden size must be divisible by num_heads of {num_heads}"
 
-        self.i_proj = BitLinear(hidden_size, self.input_dim, bias=False)
-        self.f_proj = BitLinear(hidden_size, self.input_dim, bias=False)
-        self.g_proj = BitLinear(hidden_size, self.input_dim, bias=False)
+        # Select the appropriate BitLinear class based on full_precision
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        
+        self.i_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
+        self.f_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
+        self.g_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
 
         if use_short_conv:
             self.conv_size = conv_size
@@ -70,10 +74,10 @@ class HGRNBitAttention(nn.Module):
                 self.i_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
 
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
-        self.o_proj = BitLinear(self.input_dim, hidden_size, bias=False)
+        self.o_proj = BitLinearCls(self.input_dim, hidden_size, bias=False)
 
-        self.rotary_embeddings = rotary_embeddings
-        if self.rotary_embeddings:
+        self.rotary_embedding = rotary_embedding
+        if self.rotary_embedding:
             self.rotary_emb = RotaryEmbedding(
                 dim=self.head_dim,
                 max_position_embeddings=2048,
@@ -86,7 +90,7 @@ class HGRNBitAttention(nn.Module):
     def _initialize_weights(self, module):
         if getattr(module, "_is_hf_initialized", False):
             return
-        if isinstance(module, (nn.Linear, BitLinear)):
+        if isinstance(module, (nn.Linear, StandardBitLinear, FusedBitLinear)):
             nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
@@ -135,7 +139,7 @@ class HGRNBitAttention(nn.Module):
         i = rearrange(i, 'b l (h d) -> b h l d', h=self.num_heads)
         f = rearrange(f, 'b l (h d) -> b h l d', h=self.num_heads)
         
-        if self.rotary_embeddings:
+        if self.rotary_embedding:
             seq_len = i.shape[2]
             cos, sin = self.rotary_emb(i, seq_len=seq_len)
             i, f = apply_rotary_pos_emb(i, f, cos, sin)

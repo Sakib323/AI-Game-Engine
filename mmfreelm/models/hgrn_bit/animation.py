@@ -22,6 +22,7 @@ from transformers.utils import logging
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
+#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 
 logger = logging.get_logger(__name__)
 

@@ -39,7 +39,7 @@ from timm.models.vision_transformer import PatchEmbed
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import LayerNorm
 from mmfreelm.modules.activations import ACT2FN
-
+#from mmfreelm.ops.bitnet import BitLinear_Fuse as BitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as BitLinear
 
 def modulate(x, shift, scale):
