@@ -1,4 +1,4 @@
-# hgrn_bit.py
+# -*- coding: utf-8 -*-
 # "HGRN2: Gated Linear RNNs with State Expansion"[https://arxiv.org/abs/2404.07904]
 
 from __future__ import annotations
@@ -33,8 +33,7 @@ class HGRNBitAttention(nn.Module):
         rotary_embeddings: bool = False, 
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
-        optimized_bitlinear: bool = False,
-        full_precision: bool = False,  # New full_precision parameter
+        full_precision: bool = False,  # New parameter
     ) -> None:
         super().__init__()
         if rotary_embeddings:  # Fixed typo: changed rotary_embedding to rotary_embeddings
@@ -57,15 +56,12 @@ class HGRNBitAttention(nn.Module):
         assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
         assert self.input_dim % self.num_heads == 0, f"input_dim must be divisible by num_heads of {self.num_heads}"
 
-        # Select the appropriate Linear class based on full_precision and optimized_bitlinear
-        if full_precision:
-            LinearCls = nn.Linear
-        else:
-            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
+        # Select the appropriate BitLinear class based on full_precision
+        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
         
-        self.i_proj = LinearCls(hidden_size, self.input_dim, bias=False)
-        self.f_proj = LinearCls(hidden_size, self.input_dim, bias=False)
-        self.g_proj = LinearCls(hidden_size, self.input_dim, bias=False)
+        self.i_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
+        self.f_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
+        self.g_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
 
         if use_short_conv:
             self.conv_size = conv_size
@@ -77,7 +73,7 @@ class HGRNBitAttention(nn.Module):
                 self.i_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
 
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
-        self.o_proj = LinearCls(self.input_dim, hidden_size, bias=False)
+        self.o_proj = BitLinearCls(self.input_dim, hidden_size, bias=False)
 
         self.rotary_embeddings = rotary_embeddings
         if self.rotary_embeddings:
