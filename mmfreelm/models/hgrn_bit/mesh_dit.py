@@ -7,6 +7,7 @@
 # FIXED: Made token slicing dynamic to prevent shape assertion errors.
 # FIXED: Removed redundant normalization layer in SingleStreamBlock.
 # ADDED: image_condition flag to control image conditioning.
+# FIXED: Ensured consistent dimensions for y_emb and img_emb concatenation.
 
 from __future__ import annotations
 
@@ -195,6 +196,10 @@ class ImageLatentEmbedder(nn.Module):
         pooled_latents = latents.mean(dim=[2, 3])
         pooled_latents = self.mlp(pooled_latents)
         return pooled_latents
+
+    def get_null_embedding(self, batch_size):
+        """Return null embedding with correct shape (2D)."""
+        return self.null_embedding.expand(batch_size, -1)
 
 
 #################################################################################
@@ -518,12 +523,11 @@ class MeshDiT(nn.Module):
             img_emb = self.image_embedder(y["image_latent"], train=self.training)
         else:
             # If conditioning is off, create a null embedding matching the batch size of x_tokens.
-            # # This avoids the KeyError by not accessing y["image_latent"].
             batch_size = x_tokens.shape[0]
-            img_emb = self.image_embedder.null_embedding.expand(batch_size, -1, -1)
+            img_emb = self.image_embedder.get_null_embedding(batch_size)  # Ensure 2D output
 
         # 3. Create conditioning stream (y_tokens)
-        y_tokens = torch.cat([y_emb, img_emb], dim=1)
+        y_tokens = torch.cat([y_emb, img_emb], dim=1)  # Both should now be 2D
 
         # 4. Process through Dual-Stream blocks
         for block in self.dual_stream_blocks:
@@ -567,7 +571,7 @@ class MeshDiT(nn.Module):
             img_emb = self.image_embedder(y_img.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
         else:
             cfg_batch_size = x_tokens.shape[0]
-            img_emb = self.image_embedder.null_embedding.expand(cfg_batch_size, -1, -1)
+            img_emb = self.image_embedder.get_null_embedding(cfg_batch_size)  # Ensure 2D output
         
         y_tokens = torch.cat([y_emb, img_emb], dim=1)
 
