@@ -30,14 +30,15 @@ class HGRNBitAttention(nn.Module):
         share_conv_kernel: bool = True,
         layernorm_eps: float = 1e-5,
         layer_idx: int = None,
-        rotary_embeddings: bool = False, 
+        rotary_embeddings: bool = False,
         rope_theta: float = 10000.0,
         use_ternary_rope: bool = False,
-        full_precision: bool = False,  # New parameter
+        optimized_bitlinear: bool = True,
+        full_precision: bool = False,
     ) -> None:
         super().__init__()
-        if rotary_embeddings:  # Fixed typo: changed rotary_embedding to rotary_embeddings
-            print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}") 
+        if rotary_embeddings:
+            print(f"Initializing RotaryEmbedding with theta={rope_theta} and ternary={use_ternary_rope}")
 
         self.mode = mode
         self.hidden_size = hidden_size
@@ -56,12 +57,15 @@ class HGRNBitAttention(nn.Module):
         assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
         assert self.input_dim % self.num_heads == 0, f"input_dim must be divisible by num_heads of {self.num_heads}"
 
-        # Select the appropriate BitLinear class based on full_precision
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
-        
-        self.i_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
-        self.f_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
-        self.g_proj = BitLinearCls(hidden_size, self.input_dim, bias=False)
+        # Determine which Linear class to use based on precision flags
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
+
+        self.i_proj = LinearCls(hidden_size, self.input_dim, bias=False)
+        self.f_proj = LinearCls(hidden_size, self.input_dim, bias=False)
+        self.g_proj = LinearCls(hidden_size, self.input_dim, bias=False)
 
         if use_short_conv:
             self.conv_size = conv_size
@@ -73,7 +77,7 @@ class HGRNBitAttention(nn.Module):
                 self.i_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
 
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
-        self.o_proj = BitLinearCls(self.input_dim, hidden_size, bias=False)
+        self.o_proj = LinearCls(self.input_dim, hidden_size, bias=False)
 
         self.rotary_embeddings = rotary_embeddings
         if self.rotary_embeddings:
