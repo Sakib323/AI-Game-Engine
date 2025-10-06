@@ -7,7 +7,6 @@
 # FIXED: Made token slicing dynamic to prevent shape assertion errors.
 # FIXED: Removed redundant normalization layer in SingleStreamBlock.
 # ADDED: image_condition flag to control image conditioning.
-# FIXED: Adjusted x_embedder to handle correct input feature dimension.
 
 from __future__ import annotations
 
@@ -26,6 +25,7 @@ from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
 
 logger = logging.get_logger(__name__)
+
 
 def modulate(x, shift, scale):
     """
@@ -206,6 +206,7 @@ class DoRACrossAttention(nn.Module):
     DoRA-inspired dual cross-attention for better fusion of shape and conditioning.
     """
     def __init__(
+        self,
         dim: int,
         num_heads: int,
         head_dim: Optional[int] = None,
@@ -259,6 +260,7 @@ class AdaLNModulation(nn.Module):
     Adaptive layer norm modulation for conditioning.
     """
     def __init__(
+        self,
         hidden_size: int,
         optimized_bitlinear: bool = False,
         full_precision: bool = False
@@ -283,6 +285,7 @@ class DualStreamBlock(nn.Module):
     Dual-stream block for parallel processing of shape and conditioning.
     """
     def __init__(
+        self,
         hidden_size: int,
         num_heads: int,
         mlp_ratio: float = 4.0,
@@ -349,6 +352,7 @@ class SingleStreamBlock(nn.Module):
     Single-stream block for fused processing after dual-stream.
     """
     def __init__(
+        self,
         hidden_size: int,
         num_heads: int,
         mlp_ratio: float = 4.0,
@@ -383,6 +387,7 @@ class FinalLayer(nn.Module):
     Final layer to map back to output dimension.
     """
     def __init__(
+        self,
         hidden_size: int,
         out_dim: int,
         mlp_ratio: float = 4.0,
@@ -413,7 +418,8 @@ class MeshDiT(nn.Module):
     The main MeshDiT model class.
     """
     def __init__(
-        input_tokens: int = 4096,  # Updated to match observed input
+        self,
+        input_tokens: int = 2048,
         depth: int = 12,
         hidden_size: int = 384,
         num_heads: int = 6,
@@ -430,13 +436,13 @@ class MeshDiT(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.input_tokens = input_tokens
-        self.output_dim = input_tokens * 64  # Updated to 64 channels to match VAE output
+        self.output_dim = input_tokens * 16  # Assuming latent channels=16 as in VAE
         self.image_condition = image_condition
         self.num_dual_stream_blocks = num_dual_stream_blocks or depth // 2
         num_single_stream_blocks = depth - self.num_dual_stream_blocks
 
         # Embedders
-        self.x_embedder = nn.Linear(64, hidden_size, bias=False)  # Match input feature dim (64)
+        self.x_embedder = nn.Linear(self.output_dim // input_tokens, hidden_size, bias=False)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         if image_condition:
@@ -470,7 +476,7 @@ class MeshDiT(nn.Module):
             ) for _ in range(num_single_stream_blocks)
         ])
         
-        self.final_layer = FinalLayer(hidden_size, 64, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)  # Output 64 channels
+        self.final_layer = FinalLayer(hidden_size, self.output_dim // input_tokens, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
         self.initialize_weights()
         
@@ -504,7 +510,7 @@ class MeshDiT(nn.Module):
         num_x_tokens = x.shape[1]
 
         # 1. Embed all inputs
-        x_tokens = self.x_embedder(x)  # Now handles (batch, tokens, 64) -> (batch, tokens, hidden_size)
+        x_tokens = self.x_embedder(x)
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
         # 2. Handle image embedding based on condition flag
@@ -512,6 +518,7 @@ class MeshDiT(nn.Module):
             img_emb = self.image_embedder(y["image_latent"], train=self.training)
         else:
             # If conditioning is off, create a null embedding matching the batch size of x_tokens.
+            # # This avoids the KeyError by not accessing y["image_latent"].
             batch_size = x_tokens.shape[0]
             img_emb = self.image_embedder.null_embedding.expand(batch_size, -1, -1)
 
@@ -533,7 +540,7 @@ class MeshDiT(nn.Module):
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
 
-        assert output.shape == (x.shape[0], x.shape[1], 64), f"Final shape mismatch! Output: {output.shape}, Expected: {(x.shape[0], x.shape[1], 64)}"
+        assert output.shape == x.shape, f"Final shape mismatch! Output: {output.shape}, Input: {x.shape}"
         return output
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, cfg_scale_image):
