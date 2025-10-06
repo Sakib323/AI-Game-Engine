@@ -436,13 +436,13 @@ class MeshDiT(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.input_tokens = input_tokens
-        self.output_dim = input_tokens * 16  # Assuming latent channels=16 as in VAE
+        self.output_dim = input_tokens * 64  # Adjusted to match VAE's 64 channels
         self.image_condition = image_condition
         self.num_dual_stream_blocks = num_dual_stream_blocks or depth // 2
         num_single_stream_blocks = depth - self.num_dual_stream_blocks
 
         # Embedders
-        self.x_embedder = nn.Linear(self.output_dim // input_tokens, hidden_size, bias=False)
+        self.x_embedder = nn.Linear(64, hidden_size, bias=False)  # Adjusted to match VAE latent dim (64)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         if image_condition:
@@ -476,7 +476,7 @@ class MeshDiT(nn.Module):
             ) for _ in range(num_single_stream_blocks)
         ])
         
-        self.final_layer = FinalLayer(hidden_size, self.output_dim // input_tokens, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        self.final_layer = FinalLayer(hidden_size, 64, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)  # Output to 64 channels
         
         self.initialize_weights()
         
