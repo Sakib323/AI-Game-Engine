@@ -4,11 +4,8 @@
 # Adapted for 3D Mesh Latent Generation.
 # This version implements a dual-stream architecture inspired by MMDiT.
 # It processes shape and conditioning latents in parallel before fusion.
-# FIXED: Made token slicing dynamic to prevent shape assertion errors.
-# FIXED: Removed redundant normalization layer in SingleStreamBlock.
-# ADDED: image_condition flag to control image conditioning.
-# CHANGED: Replaced single Cross-Attention with DualCrossAttention for bidirectional flow.
-# CHANGED: Replaced `full_precision` with `optimized_bitlinear` and a new `full_precision` flag for nn.Linear override.
+# UPDATED: Replaced the cross-attention mechanism with a bidirectional,
+# DoRA-powered DualCrossAttention module for more efficient and powerful fusion.
 
 from __future__ import annotations
 
@@ -168,7 +165,6 @@ class TextEmbedder(nn.Module):
         embeddings = self.embedding(input_ids)
         attention_mask = attention_mask.unsqueeze(-1)
         pooled_embeddings = (embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)
-        # Output a sequence of length 1 for concatenation into the conditioning stream
         return self.mlp(pooled_embeddings).unsqueeze(1)
 
 
@@ -189,74 +185,104 @@ class ImageLatentEmbedder(nn.Module):
 
     def forward(self, image_latent, train=True, force_drop_mask=None):
         flattened_latent = torch.flatten(image_latent, start_dim=1)
-        # Project and reshape to [N, 1, D]
         projected_latent = self.mlp(flattened_latent).unsqueeze(1)
 
         if force_drop_mask is not None:
-            mask = force_drop_mask.float().unsqueeze(-1).unsqueeze(-1) # Shape [N, 1, 1]
+            mask = force_drop_mask.float().unsqueeze(-1).unsqueeze(-1)
         elif train and self.dropout_prob > 0:
             mask = (torch.rand(image_latent.shape[0], device=image_latent.device) < self.dropout_prob).float().unsqueeze(-1).unsqueeze(-1)
         else:
             mask = torch.zeros(image_latent.shape[0], 1, 1, device=image_latent.device)
-
-        # Use broadcasting for null embedding
+        
         return mask * self.null_embedding + (1 - mask) * projected_latent
 
 
 #################################################################################
-#               Core MMDiT-style Model Components (NEW)                         #
+#               Core MMDiT-style Model Components (UPDATED)                     #
 #################################################################################
 
-class CrossAttention(nn.Module):
+class DualCrossAttention(nn.Module):
     """
-    A standard cross-attention layer, configurable with different linear layers.
+    DoRA-inspired DUAL cross-attention for better fusion of shape and conditioning.
+    This implementation is bidirectional, with DoRA applied to each attention pass.
     """
-    def __init__(self, dim, num_heads, head_dim, optimized_bitlinear: bool = True, full_precision: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        head_dim: Optional[int] = None,
+        rank: int = 16,
+        optimized_bitlinear: bool = False,
+        full_precision: bool = False
+    ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.scale = head_dim ** -0.5
+        self.head_dim = head_dim if head_dim is not None else dim // num_heads
+        self.scale = self.head_dim ** -0.5
 
         if full_precision:
             LinearCls = nn.Linear
         else:
             LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
 
-        self.to_q = LinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_k = LinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_v = LinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_out = LinearCls(num_heads * head_dim, dim, bias=False)
+        # --- Components for Attention from X to C ---
+        self.to_q_x = LinearCls(dim, dim, bias=False)
+        self.to_kv_c = LinearCls(dim, dim * 2, bias=False)
+        self.magnitude_x = nn.Parameter(torch.ones(1, num_heads, 1, 1))
+        self.lora_A_x = nn.Linear(dim, rank, bias=False)
+        self.lora_B_x = nn.Linear(rank, dim, bias=False)
+        self.proj_x = LinearCls(dim, dim, bias=False)
 
-    def forward(self, x, context):
-        b, n, _, h = *x.shape, self.num_heads
+        # --- Components for Attention from C to X ---
+        self.to_q_c = LinearCls(dim, dim, bias=False)
+        self.to_kv_x = LinearCls(dim, dim * 2, bias=False)
+        self.magnitude_c = nn.Parameter(torch.ones(1, num_heads, 1, 1))
+        self.lora_A_c = nn.Linear(dim, rank, bias=False)
+        self.lora_B_c = nn.Linear(rank, dim, bias=False)
+        self.proj_c = LinearCls(dim, dim, bias=False)
 
-        q = self.to_q(x).view(b, n, h, self.head_dim).transpose(1, 2)
-        k = self.to_k(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
-        v = self.to_v(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
+    def _attention_pass(self, query, context, to_q, to_kv, magnitude, lora_A, lora_B, proj):
+        B, N_q, C = query.shape
+        _, N_c, _ = context.shape
 
-        out = F.scaled_dot_product_attention(q, k, v)
+        # Project query and apply DoRA adjustment
+        q_proj = to_q(query)
+        delta = lora_B(lora_A(query))
+        
+        # Reshape for multi-head attention and apply magnitude scaling
+        q_reshaped = q_proj.reshape(B, N_q, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        delta_reshaped = delta.reshape(B, N_q, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        q_final = q_reshaped + magnitude * delta_reshaped
 
-        out = out.transpose(1, 2).reshape(b, n, -1)
-        return self.to_out(out)
+        # Project key and value from context
+        k, v = to_kv(context).chunk(2, dim=-1)
+        k = k.reshape(B, N_c, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = v.reshape(B, N_c, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
-
-class DualCrossAttention(nn.Module):
-    """
-    A dual cross-attention block that allows bidirectional attention flow
-    between two streams (e.g., shape and conditioning).
-    """
-    def __init__(self, dim, num_heads, head_dim, optimized_bitlinear: bool = True, full_precision: bool = False):
-        super().__init__()
-        self.attn_x_to_c = CrossAttention(dim, num_heads, head_dim, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
-        self.attn_c_to_x = CrossAttention(dim, num_heads, head_dim, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        # Scaled dot-product attention
+        attn = F.scaled_dot_product_attention(q_final, k, v)
+        
+        # Reshape and project output
+        out = attn.transpose(1, 2).reshape(B, N_q, C)
+        return proj(out)
 
     def forward(self, x, c):
-        # Attention from conditioning stream to shape stream
-        x_out = x + self.attn_x_to_c(x, c)
-        # Attention from shape stream to conditioning stream
-        c_out = c + self.attn_c_to_x(c, x)
-        return x_out, c_out
+        # Bidirectional flow:
+        # 1. Shape stream (x) attends to conditioning stream (c)
+        x_out = x + self._attention_pass(
+            query=x, context=c, to_q=self.to_q_x, to_kv=self.to_kv_c,
+            magnitude=self.magnitude_x, lora_A=self.lora_A_x, lora_B=self.lora_B_x,
+            proj=self.proj_x
+        )
 
+        # 2. Conditioning stream (c) attends to shape stream (x)
+        c_out = c + self._attention_pass(
+            query=c, context=x, to_q=self.to_q_c, to_kv=self.to_kv_x,
+            magnitude=self.magnitude_c, lora_A=self.lora_A_c, lora_B=self.lora_B_c,
+            proj=self.proj_c
+        )
+
+        return x_out, c_out
 
 class FullPrecisionAdaLNConditioning(nn.Module):
     """
@@ -289,7 +315,7 @@ class FullPrecisionAdaLNConditioning(nn.Module):
 class DualStreamBlock(nn.Module):
     """
     A dual-stream block with separate attention for shape and conditioning,
-    and bidirectional cross-attention for fusion.
+    and bidirectional DoRA cross-attention for fusion.
     """
     def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
@@ -301,7 +327,7 @@ class DualStreamBlock(nn.Module):
         self.attn_x = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.attn_c = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
 
-        self.dual_cross_attn = DualCrossAttention(hidden_size, num_heads, hidden_size // num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        self.dual_cross_attn = DualCrossAttention(hidden_size, num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
 
         self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.mlp_c = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
@@ -393,7 +419,7 @@ class FinalLayer(nn.Module):
 class MeshDiT(nn.Module):
     """
     Diffusion model with a Transformer backbone for 3D Mesh Generation.
-    This version uses a dual-stream architecture.
+    This version uses a dual-stream architecture with DoRA-powered attention.
     """
     def __init__(
         self,
@@ -421,24 +447,20 @@ class MeshDiT(nn.Module):
         self.num_heads = num_heads
         self.image_condition = image_condition
 
-        # Select the appropriate BitLinear class based on precision flags
         if full_precision:
             LinearCls = nn.Linear
         else:
             LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
 
-        # Input Embedders
         self.x_embedder = LinearCls(input_dim, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         image_latent_dim = image_latent_channels * image_latent_height * image_latent_width
         self.image_embedder = ImageLatentEmbedder(image_latent_dim, hidden_size, dropout_prob)
 
-        # Positional embeddings are disabled
         self.pos_embed = None
         logger.info("Absolute positional embeddings are disabled for this model.")
 
-        # Architecture blocks
         self.dual_stream_blocks = nn.ModuleList([
             DualStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
             for _ in range(num_dual_stream_blocks)
@@ -454,62 +476,50 @@ class MeshDiT(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        """Initializes weights for all sub-modules."""
         def _basic_init(module):
             if isinstance(module, (nn.Linear, StandardBitLinear, FusedBitLinear)):
                 torch.nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
-
+        
         nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
-
+        
         for block in self.dual_stream_blocks:
             nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
             nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
         for block in self.single_stream_blocks:
             nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
             nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
-
+        
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
     def forward(self, x, t, y):
-        """
-        Forward pass for the MeshDiT model.
-        """
         num_x_tokens = x.shape[1]
 
-        # 1. Embed all inputs
         x_tokens = self.x_embedder(x)
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y["input_ids"], y["attention_mask"], train=self.training)
-        # 2. Handle image embedding based on condition flag
+        
         if self.image_condition:
             img_emb = self.image_embedder(y["image_latent"], train=self.training)
         else:
-            # If conditioning is off, create a null embedding matching the batch size of x_tokens.
-            # # This avoids the KeyError by not accessing y["image_latent"].
             batch_size = x_tokens.shape[0]
             img_emb = self.image_embedder.null_embedding.expand(batch_size, -1, -1)
 
-        # 3. Create conditioning stream (y_tokens)
         y_tokens = torch.cat([y_emb, img_emb], dim=1)
 
-        # 4. Process through Dual-Stream blocks
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
 
-        # 5. Concatenate for Single-Stream blocks
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
-
-        # 6. Process through Single-Stream blocks
+        
         for block in self.single_stream_blocks:
             combined_tokens = block(combined_tokens, t_emb)
-
-        # 7. Isolate the shape tokens and process through final layer
+            
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
 
@@ -517,22 +527,19 @@ class MeshDiT(nn.Module):
         return output
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, cfg_scale_image):
-        """
-        Forward pass with Classifier-Free Guidance.
-        """
         num_x_tokens = x.shape[1]
         half = x.shape[0] // 2
-
+        
         x_tokens = self.x_embedder(x)
         x_tokens = torch.cat([x_tokens[:half]] * 4, dim=0)
         t_emb = self.t_embedder(torch.cat([t[:half]] * 4, dim=0))
 
         y_ids = y["input_ids"][:half]
         y_mask = y["attention_mask"][:half]
-        
+
         text_drop_mask = torch.tensor([1, 1, 0, 0], device=x.device).repeat_interleave(half)
         y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
-
+        
         if self.image_condition:
             y_img = y["image_latent"][:half]
             img_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
@@ -540,29 +547,28 @@ class MeshDiT(nn.Module):
         else:
             cfg_batch_size = x_tokens.shape[0]
             img_emb = self.image_embedder.null_embedding.expand(cfg_batch_size, -1, -1)
-
+        
         y_tokens = torch.cat([y_emb, img_emb], dim=1)
 
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb)
-
+        
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
         for block in self.single_stream_blocks:
             combined_tokens = block(combined_tokens, t_emb)
-
+            
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         model_out = self.final_layer(processed_x_tokens, t_emb)
 
         e_uncond, e_img, e_text, e_full = torch.chunk(model_out, 4, dim=0)
-
+        
         if self.image_condition:
             noise_pred = e_uncond + \
                          cfg_scale_text * (e_text - e_uncond) + \
                          cfg_scale_image * (e_img - e_uncond)
         else:
-            # When image condition is off, guidance is only on text.
             noise_pred = e_uncond + cfg_scale_text * (e_text - e_uncond)
-
+        
         return noise_pred
 
 
@@ -589,3 +595,4 @@ MeshDiT_models = {
     'MeshDiT-B':  MeshDiT_B,
     'MeshDiT-S':  MeshDiT_S,
 }
+
