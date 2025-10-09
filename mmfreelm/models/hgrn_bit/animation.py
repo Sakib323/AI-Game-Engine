@@ -1,4 +1,4 @@
-# animation.py
+# animation_dual_cross.py
 
 # -*- coding: utf-8 -*-
 # Adapted for 3D Animation Generation.
@@ -8,6 +8,7 @@
 # FIXED: Adjusted embedders to handle multi-token static latents without flattening.
 # ADDED: num_frames parameter to define the animation sequence length.
 # ADDED: static_condition flag to control static latent conditioning (replaces image_condition).
+# UPDATED: Replaced the standard CrossAttention with the more powerful, bidirectional DualCrossAttention from MeshDiT.
 
 from __future__ import annotations
 
@@ -46,7 +47,8 @@ class HGRNBitMLP(nn.Module):
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
         hidden_act: str = 'swish',
-        full_precision: bool = False
+        optimized_bitlinear: bool = True,
+        full_precision: bool = False,
     ):
         super().__init__()
 
@@ -57,10 +59,13 @@ class HGRNBitMLP(nn.Module):
             intermediate_size = int(hidden_size * hidden_ratio * 2 / 3)
             intermediate_size = 256 * ((intermediate_size + 256 - 1) // 256)
 
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
 
-        self.gate_proj = BitLinearCls(self.hidden_size, intermediate_size * 2, bias=False)
-        self.down_proj = BitLinearCls(intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj = LinearCls(self.hidden_size, intermediate_size * 2, bias=False)
+        self.down_proj = LinearCls(intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
@@ -173,10 +178,13 @@ class StaticLatentEmbedder(nn.Module):
     Embeds static 3D latents [N, L, C] into vector representations.
     Projects per token, keeps multi-token sequence.
     """
-    def __init__(self, input_dim, hidden_size, dropout_prob, num_tokens, full_precision: bool = False):
+    def __init__(self, input_dim, hidden_size, dropout_prob, num_tokens, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
-        self.proj = BitLinearCls(input_dim, hidden_size, bias=False)
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
+        self.proj = LinearCls(input_dim, hidden_size, bias=False)
         self.null_embedding = nn.Parameter(torch.randn(1, num_tokens, hidden_size))  # Learnable null for multi-token
         self.dropout_prob = dropout_prob
 
@@ -196,37 +204,91 @@ class StaticLatentEmbedder(nn.Module):
 
 
 #################################################################################
-#               Core MMDiT-style Model Components (NEW)                         #
+#               Core MMDiT-style Model Components (UPDATED)                     #
 #################################################################################
 
-class CrossAttention(nn.Module):
+class DualCrossAttention(nn.Module):
     """
-    A standard cross-attention layer, built with BitLinear for quantization.
+    DoRA-inspired DUAL cross-attention for better fusion of shape and conditioning.
+    This implementation is bidirectional, with DoRA applied to each attention pass.
     """
-    def __init__(self, dim, num_heads, head_dim, full_precision: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        head_dim: Optional[int] = None,
+        rank: int = 16,
+        optimized_bitlinear: bool = True,
+        full_precision: bool = False
+    ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.scale = head_dim ** -0.5
+        self.head_dim = head_dim if head_dim is not None else dim // num_heads
+        self.scale = self.head_dim ** -0.5
 
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
 
-        self.to_q = BitLinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_k = BitLinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_v = BitLinearCls(dim, num_heads * head_dim, bias=False)
-        self.to_out = BitLinearCls(num_heads * head_dim, dim, bias=False)
+        # --- Components for Attention from X to C ---
+        self.to_q_x = LinearCls(dim, dim, bias=False)
+        self.to_kv_c = LinearCls(dim, dim * 2, bias=False)
+        self.magnitude_x = nn.Parameter(torch.ones(1, num_heads, 1, 1))
+        self.lora_A_x = nn.Linear(dim, rank, bias=False)
+        self.lora_B_x = nn.Linear(rank, dim, bias=False)
+        self.proj_x = LinearCls(dim, dim, bias=False)
 
-    def forward(self, x, context):
-        b, n, _, h = *x.shape, self.num_heads
+        # --- Components for Attention from C to X ---
+        self.to_q_c = LinearCls(dim, dim, bias=False)
+        self.to_kv_x = LinearCls(dim, dim * 2, bias=False)
+        self.magnitude_c = nn.Parameter(torch.ones(1, num_heads, 1, 1))
+        self.lora_A_c = nn.Linear(dim, rank, bias=False)
+        self.lora_B_c = nn.Linear(rank, dim, bias=False)
+        self.proj_c = LinearCls(dim, dim, bias=False)
+
+    def _attention_pass(self, query, context, to_q, to_kv, magnitude, lora_A, lora_B, proj):
+        B, N_q, C = query.shape
+        _, N_c, _ = context.shape
+
+        # Project query and apply DoRA adjustment
+        q_proj = to_q(query)
+        delta = lora_B(lora_A(query))
         
-        q = self.to_q(x).view(b, n, h, self.head_dim).transpose(1, 2)
-        k = self.to_k(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
-        v = self.to_v(context).view(b, context.shape[1], h, self.head_dim).transpose(1, 2)
+        # Reshape for multi-head attention and apply magnitude scaling
+        q_reshaped = q_proj.reshape(B, N_q, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        delta_reshaped = delta.reshape(B, N_q, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        q_final = q_reshaped + magnitude * delta_reshaped
 
-        out = F.scaled_dot_product_attention(q, k, v)
+        # Project key and value from context
+        k, v = to_kv(context).chunk(2, dim=-1)
+        k = k.reshape(B, N_c, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = v.reshape(B, N_c, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+
+        # Scaled dot-product attention
+        attn = F.scaled_dot_product_attention(q_final, k, v)
         
-        out = out.transpose(1, 2).reshape(b, n, -1)
-        return self.to_out(out)
+        # Reshape and project output
+        out = attn.transpose(1, 2).reshape(B, N_q, C)
+        return proj(out)
+
+    def forward(self, x, c):
+        # Bidirectional flow:
+        # 1. Shape stream (x) attends to conditioning stream (c)
+        x_out = x + self._attention_pass(
+            query=x, context=c, to_q=self.to_q_x, to_kv=self.to_kv_c,
+            magnitude=self.magnitude_x, lora_A=self.lora_A_x, lora_B=self.lora_B_x,
+            proj=self.proj_x
+        )
+
+        # 2. Conditioning stream (c) attends to shape stream (x)
+        c_out = c + self._attention_pass(
+            query=c, context=x, to_q=self.to_q_c, to_kv=self.to_kv_x,
+            magnitude=self.magnitude_c, lora_A=self.lora_A_c, lora_B=self.lora_B_c,
+            proj=self.proj_c
+        )
+
+        return x_out, c_out
 
 
 class FullPrecisionAdaLNConditioning(nn.Module):
@@ -259,22 +321,23 @@ class FullPrecisionAdaLNConditioning(nn.Module):
 
 class DualStreamBlock(nn.Module):
     """
-    A dual-stream block with separate attention for shape and conditioning.
+    A dual-stream block with separate attention for shape and conditioning,
+    and bidirectional DoRA cross-attention for fusion.
     """
-    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, full_precision: bool = False):
+    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm3 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm4 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         
-        self.attn_x = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
-        self.attn_c = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
+        self.attn_x = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        self.attn_c = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
-        self.cross_attn = CrossAttention(hidden_size, num_heads, hidden_size // num_heads, full_precision=full_precision)
+        self.dual_cross_attn = DualCrossAttention(hidden_size, num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
-        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
-        self.mlp_c = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
+        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        self.mlp_c = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 12 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
@@ -300,8 +363,8 @@ class DualStreamBlock(nn.Module):
         mlp_c = self.mlp_c(modulated_c)
         c = c + gate_mlp_c.unsqueeze(1) * mlp_c
         
-        # Cross-attention fusion
-        x = x + self.cross_attn(x, c)
+        # Bidirectional cross-attention fusion
+        x, c = self.dual_cross_attn(x, c)
         
         return x, c
 
@@ -310,13 +373,13 @@ class SingleStreamBlock(nn.Module):
     """
     A single-stream block for combined tokens.
     """
-    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, full_precision: bool = False):
+    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         
-        self.attn = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
-        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, full_precision=full_precision)
+        self.attn = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
+        self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
@@ -339,11 +402,14 @@ class FinalLayer(nn.Module):
     """
     The final layer of the AnimDiT.
     """
-    def __init__(self, hidden_size, output_dim, mlp_ratio=4.0, full_precision: bool = False):
+    def __init__(self, hidden_size, output_dim, mlp_ratio=4.0, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
-        self.linear = BitLinearCls(hidden_size, output_dim, bias=True)
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
+        self.linear = LinearCls(hidden_size, output_dim, bias=True)
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 2 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, c):
@@ -378,7 +444,8 @@ class AnimDiT(nn.Module):
         use_rope: bool = False,
         use_ternary_rope: bool = False,
         static_condition: bool = False, # Default to False
-        full_precision: bool = False,  # New parameter
+        optimized_bitlinear: bool = True,
+        full_precision: bool = False,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -388,14 +455,16 @@ class AnimDiT(nn.Module):
         self.tokens_per_frame = input_tokens
         self.num_frames = num_frames
         
-        # Select the appropriate BitLinear class based on full_precision
-        BitLinearCls = StandardBitLinear if full_precision else FusedBitLinear
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
         
         # Input Embedders
-        self.x_embedder = BitLinearCls(input_dim, hidden_size, bias=True)
+        self.x_embedder = LinearCls(input_dim, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
-        self.static_embedder = StaticLatentEmbedder(input_dim, hidden_size, dropout_prob, static_latent_tokens, full_precision=full_precision)
+        self.static_embedder = StaticLatentEmbedder(input_dim, hidden_size, dropout_prob, static_latent_tokens, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
         # Positional embeddings are disabled
         self.pos_embed = None
@@ -403,16 +472,16 @@ class AnimDiT(nn.Module):
         
         # Architecture blocks
         self.dual_stream_blocks = nn.ModuleList([
-            DualStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
+            DualStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
             for _ in range(num_dual_stream_blocks)
         ])
         num_single_stream_blocks = depth - num_dual_stream_blocks
         self.single_stream_blocks = nn.ModuleList([
-            SingleStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope, full_precision=full_precision)
+            SingleStreamBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_rope=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
             for _ in range(num_single_stream_blocks)
         ])
         
-        self.final_layer = FinalLayer(hidden_size, self.output_dim, mlp_ratio=mlp_ratio, full_precision=full_precision)
+        self.final_layer = FinalLayer(hidden_size, self.output_dim, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
         self.initialize_weights()
         
