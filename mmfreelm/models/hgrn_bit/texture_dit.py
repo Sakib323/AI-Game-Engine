@@ -455,7 +455,7 @@ class TernaryMVAdapter(nn.Module):
         for i, block in enumerate(self.blocks):
             block_c = c
             spatial_pooled = None
-            if control_image_feature is not None and i < len(spatial_features) and spatial_features[i] != 0:
+            if control_image_feature is not None and i < len(spatial_features) and isinstance(spatial_features[i], torch.Tensor):
                 spatial_pooled = spatial_features[i].mean(dim=1)
                 block_c = block_c + spatial_pooled
 
@@ -492,3 +492,4 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
 }
+
