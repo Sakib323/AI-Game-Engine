@@ -282,8 +282,9 @@ class TernaryMVAdapterBlock(nn.Module):
             mask_input = torch.cat((x_modulated, pooled_repeat), dim=-1)
             masks = self.mask_gen(mask_input)  # (bs, seq_len, 1)
             masked_input = x_modulated * masks
-            res_out = self.attn.resampling_attn(masked_input, num_views) if hasattr(self.attn, 'resampling_attn') else 0
-            attn_out += res_out
+            if hasattr(self.attn, 'resampling_attn'):
+                res_out, _, _ = self.attn.resampling_attn(masked_input)
+                attn_out += res_out
 
         x = x + gate_msa.unsqueeze(1) * attn_out
 
