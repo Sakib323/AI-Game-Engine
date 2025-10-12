@@ -491,6 +491,10 @@ def TernaryMVAdapter_XS(use_temporal=True, use_grid=True, use_resampling=True, *
     """Extra-Small model variant for memory-constrained environments."""
     return TernaryMVAdapter(depth=8, hidden_size=256, num_heads=4, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
 
+def TernaryMVAdapter_Pico(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+    """Pico model variant for severely memory-constrained environments."""
+    return TernaryMVAdapter(depth=6, hidden_size=192, num_heads=3, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
+
 
 # Dictionary to easily access the models by name
 TernaryMVAdapter_models = {
@@ -499,5 +503,5 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
     'TernaryMVAdapter-XS': TernaryMVAdapter_XS,
+    'TernaryMVAdapter-Pico': TernaryMVAdapter_Pico,
 }
-
