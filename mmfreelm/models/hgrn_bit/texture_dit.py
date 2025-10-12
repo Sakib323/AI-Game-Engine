@@ -487,11 +487,17 @@ def TernaryMVAdapter_S(use_temporal=True, use_grid=True, use_resampling=True, **
     """Small model variant."""
     return TernaryMVAdapter(depth=12, hidden_size=384, num_heads=6, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
 
+def TernaryMVAdapter_XS(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+    """Extra-Small model variant for memory-constrained environments."""
+    return TernaryMVAdapter(depth=8, hidden_size=256, num_heads=4, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
+
+
 # Dictionary to easily access the models by name
 TernaryMVAdapter_models = {
     'TernaryMVAdapter-XL': TernaryMVAdapter_XL,
     'TernaryMVAdapter-L': TernaryMVAdapter_L,
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
+    'TernaryMVAdapter-XS': TernaryMVAdapter_XS,
 }
 
