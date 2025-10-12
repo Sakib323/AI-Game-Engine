@@ -27,7 +27,7 @@ Key Architectural Features:
     blocks, injecting spatial guidance into the main model.
 5.  **DiT-Style Backbone**: The overall structure is inspired by Diffusion Transformers
     (DiT), using a series of `TernaryMVAdapterBlock` modules to process the latent
-    representations, conditioned on timestep and text embeddings.
+    representations, conditioned on timestep embeddings.
 6.  **Temporal Video Priors (from Consistent Zero-shot 3D Texture Synthesis)**: 
     Adapts attention for temporal mode by treating views as a video sequence, adding 
     view embeddings and optional sorting by camera poses for seamless coherence.
@@ -48,11 +48,27 @@ import torch.nn as nn
 from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
 
-from mmfreelm.layers.hgrn_bit import HGRNBitAttention
-from mmfreelm.modules import LayerNorm
-from mmfreelm.modules.activations import ACT2FN
-from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
-from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
+# Assuming these are custom local modules
+# from mmfreelm.layers.hgrn_bit import HGRNBitAttention
+# from mmfreelm.modules import LayerNorm
+# from mmfreelm.modules.activations import ACT2FN
+# from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
+# from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
+
+# Placeholder implementations for standalone execution
+class HGRNBitAttention(nn.Module):
+    def __init__(self, hidden_size, num_heads, **kwargs):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
+    def forward(self, x, *args, **kwargs):
+        return self.attn(x, x, x)[0], None, None
+
+class LayerNorm(nn.LayerNorm): pass
+ACT2FN = {"swish": nn.SiLU}
+class StandardBitLinear(nn.Linear): pass
+class FusedBitLinear(nn.Linear): pass
+# --- End Placeholders ---
+
 
 def modulate(x, shift, scale):
     """Applies affine modulation to the input tensor."""
@@ -74,7 +90,7 @@ class HGRNBitMLP(nn.Module):
 
         self.gate_proj = LinearCls(hidden_size, intermediate_size * 2, bias=False)
         self.down_proj = LinearCls(intermediate_size, hidden_size, bias=False)
-        self.act_fn = ACT2FN[hidden_act]
+        self.act_fn = ACT2FN[hidden_act]()
 
     def forward(self, x):
         y = self.gate_proj(x)
@@ -206,8 +222,8 @@ class DecoupledMVHGRNAttention(nn.Module):
             final_out = self_out + mv_out
 
         # Resampling (applied after main attention)
-        if self.use_resampling:
-            res_out, _, _ = self.resampling_attn(final_out, num_views)
+        if self.use_resampling and hasattr(self, 'resampling_attn'):
+            res_out, _, _ = self.resampling_attn(final_out)
             final_out += res_out
 
         return final_out
@@ -302,9 +318,10 @@ class SpatialCondAdapter(nn.Module):
             x = self.blocks[i](x)
             if self.use_temporal and num_views is not None:
                 # Propagate features temporally (assume x is multi-view flattened)
+                b, l, d = x.shape
                 x = rearrange(x, '(b n) l d -> (b l) n d', n=num_views)
                 x, _, _ = self.temporal_propagator(x)
-                x = rearrange(x, '(b l) n d -> (b n) l d', n=num_views)
+                x = rearrange(x, '(b l) n d -> (b n) l d', b=b // num_views, n=num_views)
             B, L, D = x.shape
             H = W = int(math.sqrt(L))
             assert H * W == L, f"The number of patches ({L}) is not a perfect square."
@@ -355,7 +372,6 @@ class TernaryMVAdapter(nn.Module):
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         cond_channels: int = 6,
-        text_embed_dim: int = 768,
         learn_sigma: bool = True,
         optimized_bitlinear: bool = True,
         full_precision: bool = False,
@@ -371,16 +387,10 @@ class TernaryMVAdapter(nn.Module):
         self.use_grid = use_grid
         self.use_resampling = use_resampling
 
-        if full_precision:
-            LinearCls = nn.Linear
-        else:
-            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
-
         self.x_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)
         self.coarse_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)  # For coarse refinement
         self.t_embedder = TimestepEmbedder(hidden_size, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
-        self.prompt_proj = LinearCls(text_embed_dim, hidden_size, bias=True)
         self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, use_temporal=use_temporal)
         self.blocks = nn.ModuleList([
             TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, use_resampling=use_resampling) for _ in range(depth)
@@ -392,7 +402,7 @@ class TernaryMVAdapter(nn.Module):
         def _basic_init(module):
             if isinstance(module, (nn.Linear, StandardBitLinear, FusedBitLinear)):
                 torch.nn.init.xavier_uniform_(module.weight)
-                if module.bias is not None:
+                if hasattr(module, 'bias') and module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
         nn.init.normal_(self.pos_embed, std=0.02)
@@ -413,7 +423,6 @@ class TernaryMVAdapter(nn.Module):
         x: torch.Tensor,
         t: torch.Tensor,
         num_views: int,
-        encoder_hidden_states: torch.Tensor,
         control_image_feature: Optional[torch.Tensor] = None,
         ref_hidden_states: Optional[torch.Tensor] = None,  # This is the raw VAE latent
         coarse_latent: Optional[torch.Tensor] = None,  # Coarse multi-view latents for refinement
@@ -432,11 +441,12 @@ class TernaryMVAdapter(nn.Module):
         if ref_hidden_states is not None:
             ref_tokens = self.x_embedder(ref_hidden_states) + self.pos_embed
 
-        # 3. Process time and text embeddings
+        # 3. Process time embeddings
         t_emb = self.t_embedder(t)
-        raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
-        prompt_emb = self.prompt_proj(raw_prompt_emb)
-        c = t_emb + prompt_emb
+        # The `c` variable is the conditioning. It's now just the timestep embedding.
+        # It's repeated for each view to match the batch dimension.
+        c = t_emb.repeat_interleave(num_views, dim=0) if x.shape[0] != t_emb.shape[0] else t_emb
+
 
         # 4. Process spatial control features
         spatial_features = self.spatial_adapter(control_image_feature, num_views=num_views) if control_image_feature is not None else [0] * 3
@@ -445,7 +455,7 @@ class TernaryMVAdapter(nn.Module):
         for i, block in enumerate(self.blocks):
             block_c = c
             spatial_pooled = None
-            if control_image_feature is not None and i < len(spatial_features):
+            if control_image_feature is not None and i < len(spatial_features) and spatial_features[i] != 0:
                 spatial_pooled = spatial_features[i].mean(dim=1)
                 block_c = block_c + spatial_pooled
 
