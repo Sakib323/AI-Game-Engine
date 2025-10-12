@@ -27,16 +27,7 @@ Key Architectural Features:
     blocks, injecting spatial guidance into the main model.
 5.  **DiT-Style Backbone**: The overall structure is inspired by Diffusion Transformers
     (DiT), using a series of `TernaryMVAdapterBlock` modules to process the latent
-    representations, conditioned on timestep embeddings.
-6.  **Temporal Video Priors (from Consistent Zero-shot 3D Texture Synthesis)**: 
-    Adapts attention for temporal mode by treating views as a video sequence, adding 
-    view embeddings and optional sorting by camera poses for seamless coherence.
-7.  **Coarse-to-Fine Refinement (from Sharp-It)**: Supports concatenation of coarse 
-    multi-view latents as input for refinement, with grid-based shared attention in 
-    a 3x2 layout for global correspondences.
-8.  **Multi-View Sampling and Resampling (from TexDreamer)**: Includes a resampling 
-    attention head and depth-aware mask generator to refine inconsistent regions, 
-    enhancing photorealistic robustness.
+    representations, conditioned on timestep and text embeddings.
 UPDATED: Added full_precision and optimized_bitlinear arguments for consistency with mesh_dit.py.
 """
 
@@ -48,27 +39,11 @@ import torch.nn as nn
 from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
 
-# Assuming these are custom local modules
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import LayerNorm
 from mmfreelm.modules.activations import ACT2FN
 from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
-
-# Placeholder implementations for standalone execution
-class HGRNBitAttention(nn.Module):
-    def __init__(self, hidden_size, num_heads, **kwargs):
-        super().__init__()
-        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
-    def forward(self, x, *args, **kwargs):
-        return self.attn(x, x, x)[0], None, None
-
-class LayerNorm(nn.LayerNorm): pass
-ACT2FN = {"swish": nn.SiLU}
-class StandardBitLinear(nn.Linear): pass
-class FusedBitLinear(nn.Linear): pass
-# --- End Placeholders ---
-
 
 def modulate(x, shift, scale):
     """Applies affine modulation to the input tensor."""
@@ -90,7 +65,7 @@ class HGRNBitMLP(nn.Module):
 
         self.gate_proj = LinearCls(hidden_size, intermediate_size * 2, bias=False)
         self.down_proj = LinearCls(intermediate_size, hidden_size, bias=False)
-        self.act_fn = ACT2FN[hidden_act]()
+        self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
         y = self.gate_proj(x)
@@ -134,110 +109,49 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp(t_freq)
         return t_emb
 
-class ViewEmbedder(TimestepEmbedder):
-    """
-    Embeds view indices or angles into vector representations for temporal priors.
-    """
-    def __init__(self, hidden_size, frequency_embedding_size=256, optimized_bitlinear: bool = True, full_precision: bool = False):
-        super().__init__(hidden_size, frequency_embedding_size, optimized_bitlinear, full_precision)
-
-    def forward(self, v):
-        return super().forward(v)
-
 # --- Core Ternary MV-Adapter Modules ---
 
 class DecoupledMVHGRNAttention(nn.Module):
     """
     A wrapper around HGRNBitAttention to handle decoupled multi-view and
-    reference image conditioning. Enhanced with temporal mode, grid attention,
-    and resampling for advanced features.
+    reference image conditioning.
     """
-    def __init__(self, hidden_size: int, num_heads: int, optimized_bitlinear: bool = True, full_precision: bool = False, use_temporal: bool = True, use_grid: bool = True, use_resampling: bool = True, **hgrn_kwargs):
+    def __init__(self, hidden_size: int, num_heads: int, optimized_bitlinear: bool = True, full_precision: bool = False, **hgrn_kwargs):
         super().__init__()
-        self.use_temporal = use_temporal
-        self.use_grid = use_grid
-        self.use_resampling = use_resampling
-
         self.self_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **hgrn_kwargs)
         self.mv_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **hgrn_kwargs)
         self.ref_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **hgrn_kwargs)
-
-        if self.use_grid:
-            self.grid_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **hgrn_kwargs)
-
-        if self.use_resampling:
-            self.resampling_attn = HGRNBitAttention(hidden_size=hidden_size, num_heads=num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **hgrn_kwargs)
-
-        if self.use_temporal:
-            self.view_embedder = ViewEmbedder(hidden_size, frequency_embedding_size=256, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         num_views: int,
-        ref_tokens: Optional[torch.Tensor] = None,
-        poses: Optional[torch.Tensor] = None,  # (batch_size, num_views, pose_dim) for sorting
+        ref_tokens: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         batch_size = hidden_states.shape[0] // num_views
         seq_len = hidden_states.shape[1]
 
         self_out, _, _ = self.self_attn(hidden_states)
 
-        # Multi-view input preparation
-        if self.use_temporal and poses is not None:
-            # Sort views by azimuth (assume poses[..., 0] is azimuth)
-            _, sort_idx = poses[..., 0].sort(dim=1)
-            hs = rearrange(hidden_states, '(b n) l d -> b n l d', n=num_views)
-            hs_sorted = hs.gather(1, sort_idx[:, :, None, None].expand(-1, -1, seq_len, hidden_states.shape[-1]))
-            mv_in = rearrange(hs_sorted, 'b n l d -> (b l) n d')
-        else:
-            mv_in = rearrange(hidden_states, '(b n) l d -> (b l) n d', n=num_views)
-
-        if self.use_temporal:
-            view_indices = torch.arange(num_views, dtype=torch.float32, device=hidden_states.device)
-            view_emb = self.view_embedder(view_indices)
-            mv_in = mv_in + view_emb[None, :, :]
-
+        mv_in = rearrange(hidden_states, '(b n) l d -> (b l) n d', b=batch_size, n=num_views)
         mv_out, _, _ = self.mv_attn(mv_in)
         mv_out = rearrange(mv_out, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
-
-        # Grid attention (assume num_views=6 for 3x2 grid)
-        if self.use_grid and num_views == 6:
-            # Column-wise attention
-            mv_in_grid_col = rearrange(mv_in, '(b l) (r c) d -> (b l r) c d', l=seq_len, r=3, c=2)
-            grid_out_col, _, _ = self.grid_attn(mv_in_grid_col)
-            grid_out_col = rearrange(grid_out_col, '(b l r) c d -> (b l) (r c) d', b=batch_size, l=seq_len, r=3)
-
-            # Row-wise attention
-            mv_in_grid_row = rearrange(mv_in, '(b l) (r c) d -> (b l c) r d', l=seq_len, r=3, c=2)
-            grid_out_row, _, _ = self.grid_attn(mv_in_grid_row)
-            grid_out_row = rearrange(grid_out_row, '(b l c) r d -> (b l) (r c) d', b=batch_size, l=seq_len, c=2)
-
-            grid_sum = grid_out_col + grid_out_row
-            mv_out += rearrange(grid_sum, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
         if ref_tokens is not None:
             ref_out, _, _ = self.ref_attn(ref_tokens.repeat_interleave(num_views, dim=0))
             final_out = self_out + mv_out + ref_out
         else:
             final_out = self_out + mv_out
-
-        # Resampling (applied after main attention)
-        if self.use_resampling and hasattr(self, 'resampling_attn'):
-            res_out, _, _ = self.resampling_attn(final_out)
-            final_out += res_out
-
         return final_out
 
 class TernaryMVAdapterBlock(nn.Module):
     """
-    A single block of the Ternary MV-Adapter. Enhanced with depth-aware resampling masks.
+    A single block of the Ternary MV-Adapter.
     """
-    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, optimized_bitlinear: bool = True, full_precision: bool = False, use_resampling: bool = True):
+    def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
-        self.use_resampling = use_resampling
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = DecoupledMVHGRNAttention(hidden_size, num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, use_resampling=use_resampling)
+        self.attn = DecoupledMVHGRNAttention(hidden_size, num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.mlp = HGRNBitMLP(hidden_size, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         
@@ -251,41 +165,18 @@ class TernaryMVAdapterBlock(nn.Module):
             LinearCls(hidden_size, 6 * hidden_size, bias=True)
         )
 
-        if self.use_resampling:
-            self.mask_gen = nn.Sequential(
-                LayerNorm(hidden_size * 2),  # For cat with spatial pooled
-                LinearCls(hidden_size * 2, hidden_size),
-                nn.ReLU(),
-                LinearCls(hidden_size, 1),
-                nn.Sigmoid()
-            )
-
     def forward(
         self,
         x: torch.Tensor,
         c: torch.Tensor,
         num_views: int,
-        ref_tokens: Optional[torch.Tensor] = None,
-        spatial_feature_pooled: Optional[torch.Tensor] = None,
-        poses: Optional[torch.Tensor] = None
+        ref_tokens: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = \
             self.adaLN_modulation(c).chunk(6, dim=1)
 
         x_modulated = modulate(self.norm1(x), shift_msa, scale_msa)
-        attn_out = self.attn(x_modulated, num_views, ref_tokens, poses=poses)
-
-        # Depth-aware resampling if enabled
-        if self.use_resampling and spatial_feature_pooled is not None:
-            seq_len = x_modulated.shape[1]
-            pooled_repeat = spatial_feature_pooled.unsqueeze(1).repeat(1, seq_len, 1)
-            mask_input = torch.cat((x_modulated, pooled_repeat), dim=-1)
-            masks = self.mask_gen(mask_input)  # (bs, seq_len, 1)
-            masked_input = x_modulated * masks
-            if hasattr(self.attn, 'resampling_attn'):
-                res_out, _, _ = self.attn.resampling_attn(masked_input)
-                attn_out += res_out
-
+        attn_out = self.attn(x_modulated, num_views, ref_tokens)
         x = x + gate_msa.unsqueeze(1) * attn_out
 
         x_modulated = modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -296,11 +187,10 @@ class TernaryMVAdapterBlock(nn.Module):
 
 class SpatialCondAdapter(nn.Module):
     """
-    A lightweight adapter for spatial conditioning. Enhanced with video-like feature propagation for temporal priors.
+    A lightweight adapter for spatial conditioning.
     """
-    def __init__(self, in_channels: int, hidden_size: int, patch_size=16, depth=3, optimized_bitlinear: bool = True, full_precision: bool = False, use_temporal: bool = True):
+    def __init__(self, in_channels: int, hidden_size: int, patch_size=16, depth=3, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
-        self.use_temporal = use_temporal
         self.patch_embed = PatchEmbed(img_size=None, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size)
         self.blocks = nn.ModuleList([
             nn.Sequential(LayerNorm(hidden_size), HGRNBitMLP(hidden_size, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)) for _ in range(depth)
@@ -308,22 +198,14 @@ class SpatialCondAdapter(nn.Module):
         self.downsamplers = nn.ModuleList([
              nn.Conv2d(hidden_size, hidden_size, kernel_size=2, stride=2) for _ in range(depth)
         ])
-        if self.use_temporal:
-            self.temporal_propagator = HGRNBitAttention(hidden_size=hidden_size, num_heads=16, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
 
-    def forward(self, x_cond, num_views: int = None):
+    def forward(self, x_cond):
         x = self.patch_embed(x_cond)
         features = []
         num_feature_blocks = min(len(self.blocks), len(self.downsamplers))
 
         for i in range(num_feature_blocks):
             x = self.blocks[i](x)
-            if self.use_temporal and num_views is not None:
-                # Propagate features temporally (assume x is multi-view flattened)
-                b, l, d = x.shape
-                x = rearrange(x, '(b n) l d -> (b l) n d', n=num_views)
-                x, _, _ = self.temporal_propagator(x)
-                x = rearrange(x, '(b l) n d -> (b n) l d', b=b // num_views, n=num_views)
             B, L, D = x.shape
             H = W = int(math.sqrt(L))
             assert H * W == L, f"The number of patches ({L}) is not a perfect square."
@@ -362,7 +244,7 @@ class FinalLayer(nn.Module):
 
 class TernaryMVAdapter(nn.Module):
     """
-    The main Ternary Multi-View Adapter model. Enhanced with temporal priors, coarse-to-fine refinement, and resampling.
+    The main Ternary Multi-View Adapter model.
     """
     def __init__(
         self,
@@ -374,28 +256,28 @@ class TernaryMVAdapter(nn.Module):
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
         cond_channels: int = 6,
+        text_embed_dim: int = 768,
         learn_sigma: bool = True,
         optimized_bitlinear: bool = True,
         full_precision: bool = False,
-        use_temporal: bool = True,
-        use_grid: bool = True,
-        use_resampling: bool = True,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
-        self.use_temporal = use_temporal
-        self.use_grid = use_grid
-        self.use_resampling = use_resampling
+
+        if full_precision:
+            LinearCls = nn.Linear
+        else:
+            LinearCls = FusedBitLinear if optimized_bitlinear else StandardBitLinear
 
         self.x_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)
-        self.coarse_embedder = PatchEmbed(img_size=input_size, patch_size=patch_size, in_chans=in_channels, embed_dim=hidden_size, bias=True)  # For coarse refinement
         self.t_embedder = TimestepEmbedder(hidden_size, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, hidden_size))
-        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, use_temporal=use_temporal)
+        self.prompt_proj = LinearCls(text_embed_dim, hidden_size, bias=True)
+        self.spatial_adapter = SpatialCondAdapter(cond_channels, hidden_size, patch_size=16, depth=3, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.blocks = nn.ModuleList([
-            TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, use_resampling=use_resampling) for _ in range(depth)
+            TernaryMVAdapterBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision) for _ in range(depth)
         ])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.initialize_weights()
@@ -404,13 +286,13 @@ class TernaryMVAdapter(nn.Module):
         def _basic_init(module):
             if isinstance(module, (nn.Linear, StandardBitLinear, FusedBitLinear)):
                 torch.nn.init.xavier_uniform_(module.weight)
-                if hasattr(module, 'bias') and module.bias is not None:
+                if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
         nn.init.normal_(self.pos_embed, std=0.02)
 
     def unpatchify(self, x):
-        """Converts tokens back to image shape. Extended for resampled views if needed."""
+        """Converts tokens back to image shape."""
         c = self.out_channels
         p = self.x_embedder.patch_size[0]
         h = w = int(x.shape[1] ** 0.5)
@@ -425,43 +307,37 @@ class TernaryMVAdapter(nn.Module):
         x: torch.Tensor,
         t: torch.Tensor,
         num_views: int,
+        encoder_hidden_states: torch.Tensor,
         control_image_feature: Optional[torch.Tensor] = None,
-        ref_hidden_states: Optional[torch.Tensor] = None,  # This is the raw VAE latent
-        coarse_latent: Optional[torch.Tensor] = None,  # Coarse multi-view latents for refinement
-        poses: Optional[torch.Tensor] = None,  # For temporal sorting
+        ref_hidden_states: Optional[torch.Tensor] = None # This is the raw VAE latent
     ):
         # 1. Process the main noisy latent
         x_embed = self.x_embedder(x) + self.pos_embed
-
-        # Add coarse refinement if provided
-        if coarse_latent is not None:
-            coarse_embed = self.coarse_embedder(coarse_latent) + self.pos_embed
-            x_embed += coarse_embed
         
-        # 2. Process the reference image latent
+        # 2. Process the reference image latent (THE FIX IS HERE)
         ref_tokens = None
         if ref_hidden_states is not None:
+            # Use the same embedder to patchify and project the reference latent
             ref_tokens = self.x_embedder(ref_hidden_states) + self.pos_embed
 
-        # 3. Process time embeddings
+        # 3. Process time and text embeddings
         t_emb = self.t_embedder(t)
-        # The `c` variable is the conditioning. It's now just the timestep embedding.
-        # It's repeated for each view to match the batch dimension.
-        c = t_emb.repeat_interleave(num_views, dim=0) if x.shape[0] != t_emb.shape[0] else t_emb
-
+        raw_prompt_emb = encoder_hidden_states.mean(dim=1).repeat_interleave(num_views, dim=0)
+        prompt_emb = self.prompt_proj(raw_prompt_emb)
+        c = t_emb + prompt_emb
 
         # 4. Process spatial control features
-        spatial_features = self.spatial_adapter(control_image_feature, num_views=num_views) if control_image_feature is not None else [0] * 3
+        spatial_features = self.spatial_adapter(control_image_feature) if control_image_feature is not None else [0] * 3
 
         # 5. Run through the main blocks
         for i, block in enumerate(self.blocks):
             block_c = c
-            spatial_pooled = None
-            if control_image_feature is not None and i < len(spatial_features) and isinstance(spatial_features[i], torch.Tensor):
-                spatial_pooled = spatial_features[i].mean(dim=1)
-                block_c = block_c + spatial_pooled
+            if control_image_feature is not None and i < len(spatial_features):
+                spatial_feature_pooled = spatial_features[i].mean(dim=1)
+                block_c = block_c + spatial_feature_pooled
 
-            x_embed = block(x_embed, block_c, num_views, ref_tokens, spatial_feature_pooled=spatial_pooled, poses=poses)
+            # Pass the correctly processed ref_tokens to the block
+            x_embed = block(x_embed, block_c, num_views, ref_tokens)
 
         output = self.final_layer(x_embed, c)
         output = self.unpatchify(output)
@@ -471,30 +347,21 @@ class TernaryMVAdapter(nn.Module):
 #              Scalable Model Variants (S, B, L, XL)                          #
 #################################################################################
 
-def TernaryMVAdapter_XL(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+def TernaryMVAdapter_XL(**kwargs):
     """Extra-Large model variant."""
-    return TernaryMVAdapter(depth=28, hidden_size=1152, num_heads=16, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
+    return TernaryMVAdapter(depth=28, hidden_size=1152, num_heads=16, **kwargs)
 
-def TernaryMVAdapter_L(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+def TernaryMVAdapter_L(**kwargs):
     """Large model variant."""
-    return TernaryMVAdapter(depth=24, hidden_size=1024, num_heads=16, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
+    return TernaryMVAdapter(depth=24, hidden_size=1024, num_heads=16, **kwargs)
 
-def TernaryMVAdapter_B(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+def TernaryMVAdapter_B(**kwargs):
     """Base model variant."""
-    return TernaryMVAdapter(depth=12, hidden_size=768, num_heads=12, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
+    return TernaryMVAdapter(depth=12, hidden_size=768, num_heads=12, **kwargs)
 
-def TernaryMVAdapter_S(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
+def TernaryMVAdapter_S(**kwargs):
     """Small model variant."""
-    return TernaryMVAdapter(depth=12, hidden_size=384, num_heads=6, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
-
-def TernaryMVAdapter_XS(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
-    """Extra-Small model variant for memory-constrained environments."""
-    return TernaryMVAdapter(depth=8, hidden_size=256, num_heads=4, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
-
-def TernaryMVAdapter_Pico(use_temporal=True, use_grid=True, use_resampling=True, **kwargs):
-    """Pico model variant for severely memory-constrained environments."""
-    return TernaryMVAdapter(depth=6, hidden_size=192, num_heads=3, use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling, **kwargs)
-
+    return TernaryMVAdapter(depth=12, hidden_size=384, num_heads=6, **kwargs)
 
 # Dictionary to easily access the models by name
 TernaryMVAdapter_models = {
@@ -502,6 +369,4 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-L': TernaryMVAdapter_L,
     'TernaryMVAdapter-B': TernaryMVAdapter_B,
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
-    'TernaryMVAdapter-XS': TernaryMVAdapter_XS,
-    'TernaryMVAdapter-Pico': TernaryMVAdapter_Pico,
-}
+} 
