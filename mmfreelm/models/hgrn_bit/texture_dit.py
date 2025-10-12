@@ -204,16 +204,17 @@ class DecoupledMVHGRNAttention(nn.Module):
         # Grid attention (assume num_views=6 for 3x2 grid)
         if self.use_grid and num_views == 6:
             # Column-wise attention
-            mv_in_grid_col = rearrange(mv_in, '(b l) (r c) d -> (b l r) c d', r=3, c=2)
+            mv_in_grid_col = rearrange(mv_in, '(b l) (r c) d -> (b l r) c d', l=seq_len, r=3, c=2)
             grid_out_col, _, _ = self.grid_attn(mv_in_grid_col)
-            grid_out_col = rearrange(grid_out_col, '(b l r) c d -> (b l) (r c) d', r=3)
+            grid_out_col = rearrange(grid_out_col, '(b l r) c d -> (b l) (r c) d', b=batch_size, l=seq_len, r=3)
 
             # Row-wise attention
-            mv_in_grid_row = rearrange(mv_in, '(b l) (r c) d -> (b l c) r d', r=3, c=2)
+            mv_in_grid_row = rearrange(mv_in, '(b l) (r c) d -> (b l c) r d', l=seq_len, r=3, c=2)
             grid_out_row, _, _ = self.grid_attn(mv_in_grid_row)
-            grid_out_row = rearrange(grid_out_row, '(b l c) r d -> (b l) (r c) d', c=2)
+            grid_out_row = rearrange(grid_out_row, '(b l c) r d -> (b l) (r c) d', b=batch_size, l=seq_len, c=2)
 
-            mv_out += rearrange(grid_out_col + grid_out_row, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
+            grid_sum = grid_out_col + grid_out_row
+            mv_out += rearrange(grid_sum, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
         if ref_tokens is not None:
             ref_out, _, _ = self.ref_attn(ref_tokens.repeat_interleave(num_views, dim=0))
