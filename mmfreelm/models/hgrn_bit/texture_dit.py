@@ -495,3 +495,4 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-XS': TernaryMVAdapter_XS,
     'TernaryMVAdapter-Pico': TernaryMVAdapter_Pico,
 }
+
