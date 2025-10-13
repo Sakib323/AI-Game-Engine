@@ -47,8 +47,6 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 from timm.models.vision_transformer import PatchEmbed
-
-# Assuming these are custom local modules
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import LayerNorm
 from mmfreelm.modules.activations import ACT2FN
@@ -214,7 +212,8 @@ class DecoupledMVHGRNAttention(nn.Module):
             grid_out_row = rearrange(grid_out_row, '(b l c) r d -> (b l) (r c) d', b=batch_size, l=seq_len, c=2)
 
             grid_sum = grid_out_col + grid_out_row
-            mv_out += rearrange(grid_sum, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
+            # FIX: Changed `+=` to out-of-place addition
+            mv_out = mv_out + rearrange(grid_sum, '(b l) n d -> (b n) l d', b=batch_size, l=seq_len)
 
         if ref_tokens is not None:
             ref_out, _, _ = self.ref_attn(ref_tokens.repeat_interleave(num_views, dim=0))
@@ -225,7 +224,8 @@ class DecoupledMVHGRNAttention(nn.Module):
         # Resampling (applied after main attention)
         if self.use_resampling and hasattr(self, 'resampling_attn'):
             res_out, _, _ = self.resampling_attn(final_out)
-            final_out += res_out
+            # FIX: Changed `+=` to out-of-place addition
+            final_out = final_out + res_out
 
         return final_out
 
@@ -284,7 +284,8 @@ class TernaryMVAdapterBlock(nn.Module):
             masked_input = x_modulated * masks
             if hasattr(self.attn, 'resampling_attn'):
                 res_out, _, _ = self.attn.resampling_attn(masked_input)
-                attn_out += res_out
+                # FIX: Changed `+=` to out-of-place addition
+                attn_out = attn_out + res_out
 
         x = x + gate_msa.unsqueeze(1) * attn_out
 
@@ -436,7 +437,8 @@ class TernaryMVAdapter(nn.Module):
         # Add coarse refinement if provided
         if coarse_latent is not None:
             coarse_embed = self.coarse_embedder(coarse_latent) + self.pos_embed
-            x_embed += coarse_embed
+            # FIX: Changed `+=` to out-of-place addition
+            x_embed = x_embed + coarse_embed
         
         # 2. Process the reference image latent
         ref_tokens = None
@@ -504,4 +506,4 @@ TernaryMVAdapter_models = {
     'TernaryMVAdapter-S': TernaryMVAdapter_S,
     'TernaryMVAdapter-XS': TernaryMVAdapter_XS,
     'TernaryMVAdapter-Pico': TernaryMVAdapter_Pico,
-}                                                   
+}
