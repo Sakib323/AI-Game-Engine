@@ -53,20 +53,6 @@ from mmfreelm.modules.activations import ACT2FN
 from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
 from mmfreelm.ops.fusedbitnet import FusedBitLinear as FusedBitLinear
 
-# Placeholder implementations for standalone execution
-class HGRNBitAttention(nn.Module):
-    def __init__(self, hidden_size, num_heads, **kwargs):
-        super().__init__()
-        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
-    def forward(self, x, *args, **kwargs):
-        return self.attn(x, x, x)[0], None, None
-
-class LayerNorm(nn.LayerNorm): pass
-ACT2FN = {"swish": nn.SiLU}
-class StandardBitLinear(nn.Linear): pass
-class FusedBitLinear(nn.Linear): pass
-# --- End Placeholders ---
-
 
 def modulate(x, shift, scale):
     """Applies affine modulation to the input tensor."""
