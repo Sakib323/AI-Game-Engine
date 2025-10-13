@@ -74,7 +74,9 @@ class HGRNBitMLP(nn.Module):
 
         self.gate_proj = LinearCls(hidden_size, intermediate_size * 2, bias=False)
         self.down_proj = LinearCls(intermediate_size, hidden_size, bias=False)
-        self.act_fn = ACT2FN[hidden_act]()
+        # FIX: The activation function was being called () during initialization without an input tensor.
+        # Changed from ACT2FN[hidden_act]() to ACT2FN[hidden_act]
+        self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
         y = self.gate_proj(x)
