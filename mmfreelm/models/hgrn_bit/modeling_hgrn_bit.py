@@ -77,7 +77,9 @@ class HGRNBitBlock(nn.Module):
             layer_idx=layer_idx,
             rotary_embeddings=config.rotary_embeddings,
             rope_theta=config.rope_theta,
-            use_ternary_rope=config.use_ternary_rope
+            use_ternary_rope=config.use_ternary_rope,
+            optimized_bitlinear = False,
+            full_precision = False,
         )
         self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.rms_norm_eps)
 

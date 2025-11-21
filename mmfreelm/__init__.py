@@ -9,6 +9,7 @@ from mmfreelm.models.hgrn_bit import (
     rotate_half,
     ternary_dit,
     mesh_dit,
+    video_gen
 )
 
 
@@ -27,6 +28,7 @@ __all__ = [
     'FinalLayerSecond',
     'DiT_models',
     'MeshDiT_models',
+    'VideoDiT_models'
 ]
 
 __version__ = '0.1'
