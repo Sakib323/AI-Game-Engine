@@ -1,7 +1,7 @@
 # video_gen.py
 # -*- coding: utf-8 -*-
 # Unified Video Generation Model: Flow Matching + Decoupled Spatial/Temporal Attention
-# Merges concepts from VideoDiT (Flow) and TextureDiT (Decoupled Attention/Resampling)
+# Merges concepts from VideoDiT (Flow) and TextureDiT (Decoupled Attention/Refinement)
 
 from __future__ import annotations
 
@@ -194,7 +194,9 @@ class ImageConditionEmbedder(nn.Module):
 class DecoupledVideoAttention(nn.Module):
     """
     Combines Spatial Attention (Intra-Frame), Temporal Attention (Inter-Frame),
-    Grid Attention, and Resampling, controlled by boolean flags.
+    Grid Attention, and Resampling.
+    
+    NOTE: Masking is applied ONLY to the resampling branch to preserve global context.
     """
     def __init__(
         self, 
@@ -240,16 +242,21 @@ class DecoupledVideoAttention(nn.Module):
                 optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **kwargs
             )
 
-    def forward(self, x, num_frames: int):
+    def forward(self, x, num_frames: int, mask: Optional[torch.Tensor] = None):
         """
         x: [B, L, D] where L = T * H * W
+        mask: [B, L, 1] Optional weighting for resampling.
         """
         B, L, D = x.shape
         T = num_frames
         
         # Determine spatial dimensions
         HW = L // T
-        assert L % T == 0, f"Sequence length {L} not divisible by num_frames {T}"
+        # Safety check, only run if cleanly divisible
+        if L % T != 0:
+             # Fallback for non-standard shapes
+             out_spatial, _, _ = self.spatial_attn(x)
+             return out_spatial
 
         # --- 1. Base Pass (Spatial or Global) ---
         if self.use_temporal:
@@ -283,7 +290,6 @@ class DecoupledVideoAttention(nn.Module):
         out_grid = 0
         if self.use_grid and self.use_temporal:
             # Apply attention on factorized spatial axes (Width vs Height)
-            # Assume HW is square-ish or factorization is handled
             H = int(math.sqrt(HW))
             if H * H == HW:
                 W = H
@@ -299,17 +305,18 @@ class DecoupledVideoAttention(nn.Module):
                 
                 out_grid = g_col + g_row
 
-        # Combine Signals
-        # In TextureDiT, these are summed. We sum them here.
+        # Combine Signals (Additive)
         final_out = out_spatial + out_temporal + out_grid
 
         # --- 4. Resampling (Refinement) ---
-        # Note: Resampling usually requires a mask generated in the Block. 
-        # If this method is called, we assume 'x' has already been masked in the block 
-        # OR we just apply the layer as a refinement step here. 
-        # TextureDiT applies it additively.
+        # Applied ONLY to the specific branch input using the mask
         if self.use_resampling:
-            res_out, _, _ = self.resampling_attn(final_out)
+            if mask is not None:
+                res_in = x * mask
+                res_out, _, _ = self.resampling_attn(res_in)
+            else:
+                res_out, _, _ = self.resampling_attn(x)
+            
             final_out = final_out + res_out
 
         return final_out
@@ -437,13 +444,13 @@ class DualStreamBlock(nn.Module):
         # --- Stream X (Video) ---
         modulated_x = modulate(self.norm1(x), shift_msa_x, scale_msa_x)
         
-        # Apply Resampling Mask if enabled
+        # FIX: Generate Mask, but pass it separately to attention
+        mask = None
         if self.use_resampling:
-            masks = self.mask_gen(modulated_x) # [B, L, 1]
-            modulated_x = modulated_x * masks
+            mask = self.mask_gen(modulated_x) # [B, L, 1]
 
-        # Advanced Attention
-        attn_x = self.attn_x(modulated_x, num_frames=num_frames)
+        # Advanced Attention: Pass mask to control resampling branch
+        attn_x = self.attn_x(modulated_x, num_frames=num_frames, mask=mask)
         x = x + gate_msa_x.unsqueeze(1) * attn_x
 
         modulated_x = modulate(self.norm2(x), shift_mlp_x, scale_mlp_x)
@@ -465,8 +472,7 @@ class DualStreamBlock(nn.Module):
 
 class SingleStreamBlock(nn.Module):
     """
-    Single stream block. Uses standard attention for simplicity in deep layers, 
-    but could be upgraded similarly if desired. Keeping simple for efficiency.
+    Single stream block. Uses standard attention for simplicity in deep layers.
     """
     def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
