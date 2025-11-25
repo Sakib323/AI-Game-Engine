@@ -1,7 +1,7 @@
 # video_gen.py
 # -*- coding: utf-8 -*-
 # Unified Video Generation Model: Diffusion + Decoupled Spatial/Temporal Attention
-# Merges concepts from VideoDiT (Diffusion Structure) and TextureDiT (Decoupled Attention/Refinement)
+# Fixed: SingleStreamBlock now correctly modulates on Timestep (t), not Text (c)
 
 from __future__ import annotations
 
@@ -141,7 +141,6 @@ class FramePosEmbedder(nn.Module):
         self.frequency_embedding_size = frequency_embedding_size
 
     def forward(self, f_indices):
-        # Uses standard sinusoidal embedding for frame positions
         t_freq = TimestepEmbedder.timestep_embedding(f_indices, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
         return t_emb
@@ -207,12 +206,6 @@ class ImageConditionEmbedder(nn.Module):
 # -----------------------------------------------------------------------------
 
 class DecoupledVideoAttention(nn.Module):
-    """
-    Combines Spatial Attention (Intra-Frame), Temporal Attention (Inter-Frame),
-    Grid Attention, and Resampling.
-    
-    NOTE: Masking is applied ONLY to the resampling branch to preserve global context.
-    """
     def __init__(
         self, 
         hidden_size, 
@@ -229,13 +222,11 @@ class DecoupledVideoAttention(nn.Module):
         self.use_grid = use_grid
         self.use_resampling = use_resampling
 
-        # 1. Base Spatial Attention (or Global if use_temporal=False)
         self.spatial_attn = HGRNBitAttention(
             hidden_size=hidden_size, num_heads=num_heads, 
             optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **kwargs
         )
 
-        # 2. Temporal Attention
         if self.use_temporal:
             self.temporal_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
@@ -243,14 +234,12 @@ class DecoupledVideoAttention(nn.Module):
             )
             self.frame_pos_embedder = FramePosEmbedder(hidden_size)
 
-        # 3. Grid Attention (Axis-based decomposition)
         if self.use_grid:
             self.grid_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
                 optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **kwargs
             )
 
-        # 4. Resampling Attention (Refinement)
         if self.use_resampling:
             self.resampling_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
@@ -258,79 +247,52 @@ class DecoupledVideoAttention(nn.Module):
             )
 
     def forward(self, x, num_frames: int, mask: Optional[torch.Tensor] = None):
-        """
-        x: [B, L, D] where L = T * H * W
-        mask: [B, L, 1] Optional weighting for resampling.
-        """
         B, L, D = x.shape
         T = num_frames
         
-        # Determine spatial dimensions
         HW = L // T
-        # Safety check, only run if cleanly divisible
         if L % T != 0:
-             # Fallback for non-standard shapes
              out_spatial, _, _ = self.spatial_attn(x)
              return out_spatial
 
-        # --- 1. Base Pass (Spatial or Global) ---
         if self.use_temporal:
-            # Reshape to run attention ONLY within each frame independently
-            # [B, T*HW, D] -> [B*T, HW, D]
             x_spatial = rearrange(x, 'b (t hw) d -> (b t) hw d', t=T, hw=HW)
             out_spatial, _, _ = self.spatial_attn(x_spatial)
             out_spatial = rearrange(out_spatial, '(b t) hw d -> b (t hw) d', t=T)
         else:
-            # Run on the whole flattened sequence (Legacy Mode)
             out_spatial, _, _ = self.spatial_attn(x)
 
-        # --- 2. Temporal Pass (Decoupled) ---
         out_temporal = 0
         if self.use_temporal:
-            # Reshape to run attention ONLY across time for each pixel independently
-            # [B, T*HW, D] -> [B*HW, T, D]
             x_temporal = rearrange(x, 'b (t hw) d -> (b hw) t d', t=T, hw=HW)
-            
-            # Add Frame Position Embeddings
-            # Use discrete frame indices 0..T
             frame_indices = torch.arange(T, device=x.device, dtype=torch.long)
-            t_pos = self.frame_pos_embedder(frame_indices) # [T, D]
+            t_pos = self.frame_pos_embedder(frame_indices)
             x_temporal = x_temporal + t_pos.unsqueeze(0)
-
             t_out, _, _ = self.temporal_attn(x_temporal)
             out_temporal = rearrange(t_out, '(b hw) t d -> b (t hw) d', hw=HW)
 
-        # --- 3. Grid Pass ---
         out_grid = 0
         if self.use_grid and self.use_temporal:
-            # Apply attention on factorized spatial axes (Width vs Height)
             H = int(math.sqrt(HW))
             if H * H == HW:
                 W = H
-                # Column Attention: [B*T, H, W, D] -> [B*T*W, H, D]
                 x_grid_col = rearrange(x, 'b (t h w) d -> (b t w) h d', t=T, h=H, w=W)
                 g_col, _, _ = self.grid_attn(x_grid_col)
                 g_col = rearrange(g_col, '(b t w) h d -> b (t h w) d', t=T, w=W)
                 
-                # Row Attention: [B*T, H, W, D] -> [B*T*H, W, D]
                 x_grid_row = rearrange(x, 'b (t h w) d -> (b t h) w d', t=T, h=H, w=W)
                 g_row, _, _ = self.grid_attn(x_grid_row)
                 g_row = rearrange(g_row, '(b t h) w d -> b (t h w) d', t=T, h=H)
-                
                 out_grid = g_col + g_row
 
-        # Combine Signals (Additive)
         final_out = out_spatial + out_temporal + out_grid
 
-        # --- 4. Resampling (Refinement) ---
-        # Applied ONLY to the specific branch input using the mask
         if self.use_resampling:
             if mask is not None:
                 res_in = x * mask
                 res_out, _, _ = self.resampling_attn(res_in)
             else:
                 res_out, _, _ = self.resampling_attn(x)
-            
             final_out = final_out + res_out
 
         return final_out
@@ -340,7 +302,6 @@ class DecoupledVideoAttention(nn.Module):
 # -----------------------------------------------------------------------------
 
 class DualCrossAttention(nn.Module):
-    """DoRA-inspired DUAL cross-attention (Text condition)."""
     def __init__(self, dim, num_heads, head_dim=None, rank=16, optimized_bitlinear=True, full_precision=False):
         super().__init__()
         self.num_heads = num_heads
@@ -399,9 +360,6 @@ class FullPrecisionAdaLNConditioning(nn.Module):
         return self.out_proj(x)
 
 class DualStreamBlock(nn.Module):
-    """
-    Advanced Block supporting Spatial/Temporal Decoupling, Grid, and Resampling.
-    """
     def __init__(
         self, 
         hidden_size: int, 
@@ -422,7 +380,6 @@ class DualStreamBlock(nn.Module):
         self.norm3 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.norm4 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
-        # REPLACEMENT: Use DecoupledVideoAttention instead of standard HGRN for 'x'
         self.attn_x = DecoupledVideoAttention(
             hidden_size=hidden_size, num_heads=num_heads, 
             use_temporal=use_temporal, use_grid=use_grid, use_resampling=use_resampling,
@@ -430,7 +387,6 @@ class DualStreamBlock(nn.Module):
             optimized_bitlinear=optimized_bitlinear, full_precision=full_precision
         )
 
-        # Text stream (c) remains standard
         self.attn_c = HGRNBitAttention(mode='fused_recurrent', hidden_size=hidden_size, num_heads=num_heads, expand_ratio=1, use_short_conv=False, rotary_embeddings=use_rope, use_ternary_rope=use_ternary_rope, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
 
         self.dual_cross_attn = DualCrossAttention(hidden_size, num_heads, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
@@ -438,7 +394,6 @@ class DualStreamBlock(nn.Module):
         self.mlp_c = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 12 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
-        # Resampling Mask Generator (from TextureDiT)
         if self.use_resampling:
             LinearCls = nn.Linear if full_precision else (FusedBitLinear if optimized_bitlinear else StandardBitLinear)
             self.mask_gen = nn.Sequential(
@@ -455,15 +410,12 @@ class DualStreamBlock(nn.Module):
         shift_msa_x, scale_msa_x, gate_msa_x, shift_mlp_x, scale_mlp_x, gate_mlp_x, \
         shift_msa_c, scale_msa_c, gate_msa_c, shift_mlp_c, scale_mlp_c, gate_mlp_c = params.chunk(12, dim=1)
 
-        # --- Stream X (Video) ---
         modulated_x = modulate(self.norm1(x), shift_msa_x, scale_msa_x)
         
-        # FIX: Generate Mask, but pass it separately to attention
         mask = None
         if self.use_resampling:
-            mask = self.mask_gen(modulated_x) # [B, L, 1]
+            mask = self.mask_gen(modulated_x)
 
-        # Advanced Attention: Pass mask to control resampling branch
         attn_x = self.attn_x(modulated_x, num_frames=num_frames, mask=mask)
         x = x + gate_msa_x.unsqueeze(1) * attn_x
 
@@ -471,7 +423,6 @@ class DualStreamBlock(nn.Module):
         mlp_x = self.mlp(modulated_x)
         x = x + gate_mlp_x.unsqueeze(1) * mlp_x
 
-        # --- Stream C (Text) ---
         modulated_c = modulate(self.norm3(c), shift_msa_c, scale_msa_c)
         attn_c, _, _ = self.attn_c(modulated_c)
         c = c + gate_msa_c.unsqueeze(1) * attn_c
@@ -480,13 +431,13 @@ class DualStreamBlock(nn.Module):
         mlp_c = self.mlp_c(modulated_c)
         c = c + gate_mlp_c.unsqueeze(1) * mlp_c
 
-        # --- Cross ---
         x, c = self.dual_cross_attn(x, c)
         return x, c
 
 class SingleStreamBlock(nn.Module):
     """
     Single stream block. Uses standard attention for simplicity in deep layers.
+    FIXED: Uses timestep 't' for modulation, not text 'c'.
     """
     def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
@@ -496,13 +447,18 @@ class SingleStreamBlock(nn.Module):
         self.mlp = HGRNBitMLP(hidden_size, hidden_ratio=mlp_ratio, optimized_bitlinear=optimized_bitlinear, full_precision=full_precision)
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
-    def forward(self, x, c, t):
-        # NOTE: t argument added for consistency, though modulation uses c here in original structure
-        modulated_c = ACT2FN['silu'](c)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_c).chunk(6, dim=1)
+    def forward(self, x, t):
+        # x: Combined tokens (Video + Text)
+        # t: Timestep Embedding
+        modulated_t = ACT2FN['silu'](t)
+        
+        # This now chunks the feature dimension [B, 6*D] -> 6 tensors of [B, D]
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_t).chunk(6, dim=1)
+        
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
+        
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
         mlp_output = self.mlp(mlp_input)
         x = x + gate_mlp.unsqueeze(1) * mlp_output
@@ -528,10 +484,6 @@ class FinalLayer(nn.Module):
 # -----------------------------------------------------------------------------
 
 class VideoDiT(nn.Module):
-    """
-    Ternary Diffusion Transformer for Text-to-Video (Standard Diffusion Backbone).
-    Supports advanced Decoupled Spatial/Temporal/Grid Attention via feature flags.
-    """
     def __init__(
         self,
         input_size: Tuple[int, int, int] = (16, 64, 64),
@@ -549,19 +501,17 @@ class VideoDiT(nn.Module):
         first_frame_condition: bool = False, 
         optimized_bitlinear: bool = True,
         full_precision: bool = False,
-        # --- ARGS FROM VIDEO_GEN.PY ---
         use_temporal: bool = False,
         use_grid: bool = False,
         use_resampling: bool = False,
     ):
         super().__init__()
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2  # Diffusion: Learn mean & sigma
+        self.out_channels = in_channels * 2
         self.input_size = input_size 
         self.patch_size = patch_size
         self.first_frame_condition = first_frame_condition
         
-        # Advanced Feature Flags
         self.use_temporal = use_temporal
         self.use_grid = use_grid
         self.use_resampling = use_resampling
@@ -572,7 +522,6 @@ class VideoDiT(nn.Module):
         self.num_patches = self.t_patches * self.h_patches * self.w_patches
         self.patch_dim = (patch_size[0] * patch_size[1] * patch_size[2]) * self.out_channels
 
-        # Embedders (Standard Diffusion Timestep)
         self.x_embedder = VideoPatchEmbedder(in_channels, hidden_size, patch_size, optimized_bitlinear, full_precision)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
@@ -581,9 +530,7 @@ class VideoDiT(nn.Module):
             self.img_embedder = ImageConditionEmbedder(in_channels, hidden_size, patch_size[1], dropout_prob)
 
         logger.info(f"Initialized VideoDiT (Diffusion) with {self.num_patches} tokens.")
-        logger.info(f"Advanced Features: Temporal={use_temporal}, Grid={use_grid}, Resample={use_resampling}")
-
-        # Blocks
+        
         self.dual_stream_blocks = nn.ModuleList([
             DualStreamBlock(
                 hidden_size, num_heads, mlp_ratio, use_rope, use_ternary_rope, 
@@ -624,10 +571,6 @@ class VideoDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
     def unpatchify(self, x):
-        """
-        Reconstructs the 3D video volume from the token sequence.
-        Returns: [B, out_channels, T, H, W]
-        """
         b, l, d = x.shape
         c_out = self.out_channels
         pt, ph, pw = self.patch_size
@@ -641,10 +584,6 @@ class VideoDiT(nn.Module):
         return x
 
     def forward(self, x, t, y, first_frame=None):
-        """
-        x: [B, C, T, H, W]
-        t: [B] (Discrete Diffusion Steps)
-        """
         num_x_tokens = self.num_patches
         x_tokens = self.x_embedder(x)
         t_emb = self.t_embedder(t)
@@ -657,14 +596,14 @@ class VideoDiT(nn.Module):
         else:
             y_tokens = y_emb
 
-        # Dual Stream (Advanced features enabled)
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb, num_frames=self.t_patches)
 
-        # Single Stream (Joined)
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
+        
+        # FIXED: Pass t_emb to SingleStreamBlock
         for block in self.single_stream_blocks:
-            combined_tokens = block(combined_tokens, y_tokens, t_emb) # Pass t_emb if block expects it
+            combined_tokens = block(combined_tokens, t_emb) 
 
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
@@ -672,25 +611,17 @@ class VideoDiT(nn.Module):
         return self.unpatchify(output)
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, first_frame=None, cfg_scale_img=1.0):
-        """
-        Classifier-Free Guidance Forward Pass (Diffusion).
-        Returns noise prediction (ignoring variance channels for calculation).
-        """
         half = x.shape[0] // 2
-        
-        # Duplicate input for Conditional + Unconditional pass
         x_tokens = self.x_embedder(x)
         x_tokens = torch.cat([x_tokens[:half]] * 4, dim=0) if self.first_frame_condition else torch.cat([x_tokens[:half]] * 2, dim=0)
         
         t_in = torch.cat([t[:half]] * 4, dim=0) if self.first_frame_condition else torch.cat([t[:half]] * 2, dim=0)
         t_emb = self.t_embedder(t_in)
 
-        # Prepare Text Condition (with dropout)
         y_ids = y["input_ids"][:half]
         y_mask = y["attention_mask"][:half]
         
         if self.first_frame_condition:
-            # Batch: [Uncond, Text_Cond, Img_Cond, Both_Cond]
             text_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
             y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
             
@@ -699,25 +630,21 @@ class VideoDiT(nn.Module):
             img_tokens = self.img_embedder(img_in.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
             y_tokens = torch.cat([y_emb, img_tokens], dim=1)
         else:
-            # Batch: [Uncond, Text_Cond]
             text_drop_mask = torch.tensor([1, 0], device=x.device).repeat_interleave(half)
             y_emb = self.y_embedder(y_ids.repeat(2, 1), y_mask.repeat(2, 1), force_drop_ids=text_drop_mask)
             y_tokens = y_emb
 
-        # Process
         for block in self.dual_stream_blocks:
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb, num_frames=self.t_patches)
         
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
         for block in self.single_stream_blocks:
-            combined_tokens = block(combined_tokens, y_tokens, t_emb)
+            combined_tokens = block(combined_tokens, t_emb)
             
         processed_x_tokens = combined_tokens[:, :self.num_patches]
         model_out = self.final_layer(processed_x_tokens, t_emb)
         model_out = self.unpatchify(model_out)
 
-        # Split output (which contains 2*C channels) along batch dim first
-        # We assume the user handles splitting mean/var later. We return the full tensor composite.
         if self.first_frame_condition:
             e_uncond, e_text, e_img, e_both = torch.chunk(model_out, 4, dim=0)
             noise_pred = e_uncond + cfg_scale_text * (e_text - e_uncond) + cfg_scale_img * (e_img - e_uncond)
