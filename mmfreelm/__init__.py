@@ -29,7 +29,6 @@ __all__ = [
     'DiT_models',
     'MeshDiT_models',
     'VideoDiT_models',
-    'flow_matching_loss',
 ]
 
 __version__ = '0.1'
