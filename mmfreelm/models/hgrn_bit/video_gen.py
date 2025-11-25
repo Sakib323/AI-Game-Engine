@@ -1,12 +1,13 @@
 # video_gen.py
 # -*- coding: utf-8 -*-
-# Unified Video Generation Model: Diffusion + Decoupled Spatial/Temporal Attention
-# Fixed: SingleStreamBlock now correctly modulates on Timestep (t), not Text (c)
+# Unified Video Generation Model
+# Architectures: Flow Matching (VideoDiT style) OR Standard Diffusion
+# Features: Decoupled Spatial/Temporal Attention, Grid Attention, Resampling
 
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Literal
 
 import torch
 import torch.nn as nn
@@ -16,6 +17,7 @@ from transformers.utils import logging
 from einops import rearrange
 
 # Core dependencies
+# Ensure these modules exist in your mmfreelm package
 from mmfreelm.layers.hgrn_bit import HGRNBitAttention
 from mmfreelm.modules import RMSNorm, LayerNorm
 from mmfreelm.ops.bitnet import BitLinear as StandardBitLinear
@@ -97,11 +99,14 @@ class FullPrecisionMLP(nn.Module):
         return z
 
 # -----------------------------------------------------------------------------
-# Embedders
+# Embedders (Unified: Diffusion & Flow)
 # -----------------------------------------------------------------------------
 
-class TimestepEmbedder(nn.Module):
-    """Embeds scalar timesteps into vector representations (Diffusion Standard)."""
+class DiffusionTimestepEmbedder(nn.Module):
+    """
+    Standard Diffusion Timestep Embedder.
+    Expects discrete timesteps (e.g., 0 to 1000).
+    """
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -124,7 +129,37 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
+        # t: [B] integers or longs
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
+        return t_emb
+
+
+class FlowTimestepEmbedder(nn.Module):
+    """
+    Flow Matching Timestep Embedder.
+    Expects continuous timesteps t in [0, 1].
+    """
+    def __init__(self, hidden_size, frequency_embedding_size=256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=True),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+        half = frequency_embedding_size // 2
+        freqs = torch.exp(
+            -math.log(10000) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        )
+        self.register_buffer("freqs", freqs)
+
+    def forward(self, t):
+        # t: [B] floats in [0, 1]
+        args = t[:, None].float() * self.freqs[None] * 1000.0
+        t_freq = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if self.frequency_embedding_size % 2:
+            t_freq = torch.cat([t_freq, torch.zeros_like(t_freq[:, :1])], dim=-1)
         t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
         return t_emb
 
@@ -141,7 +176,8 @@ class FramePosEmbedder(nn.Module):
         self.frequency_embedding_size = frequency_embedding_size
 
     def forward(self, f_indices):
-        t_freq = TimestepEmbedder.timestep_embedding(f_indices, self.frequency_embedding_size)
+        # Reusing the static method from DiffusionTimestepEmbedder for positional encoding logic
+        t_freq = DiffusionTimestepEmbedder.timestep_embedding(f_indices, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
         return t_emb
 
@@ -170,6 +206,7 @@ class TextEmbedder(nn.Module):
         pooled_embeddings = (embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)
         return self.mlp(pooled_embeddings).unsqueeze(1)
 
+
 class VideoPatchEmbedder(nn.Module):
     def __init__(self, input_channels, hidden_size, patch_size, optimized_bitlinear=True, full_precision=False):
         super().__init__()
@@ -180,6 +217,7 @@ class VideoPatchEmbedder(nn.Module):
         x = self.proj(x)
         x = rearrange(x, 'b d t h w -> b (t h w) d')
         return x
+
 
 class ImageConditionEmbedder(nn.Module):
     def __init__(self, input_channels, hidden_size, patch_size, dropout_prob):
@@ -202,10 +240,14 @@ class ImageConditionEmbedder(nn.Module):
         return mask * self.null_embedding + (1 - mask) * x
 
 # -----------------------------------------------------------------------------
-# Advanced Attention Mechanics (Decoupled, Grid, Resampling)
+# Advanced Attention (Decoupled, Grid, Resampling)
 # -----------------------------------------------------------------------------
 
 class DecoupledVideoAttention(nn.Module):
+    """
+    Combines Spatial Attention (Intra-Frame), Temporal Attention (Inter-Frame),
+    Grid Attention, and Resampling.
+    """
     def __init__(
         self, 
         hidden_size, 
@@ -222,11 +264,13 @@ class DecoupledVideoAttention(nn.Module):
         self.use_grid = use_grid
         self.use_resampling = use_resampling
 
+        # 1. Base Spatial Attention
         self.spatial_attn = HGRNBitAttention(
             hidden_size=hidden_size, num_heads=num_heads, 
             optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **kwargs
         )
 
+        # 2. Temporal Attention
         if self.use_temporal:
             self.temporal_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
@@ -234,12 +278,14 @@ class DecoupledVideoAttention(nn.Module):
             )
             self.frame_pos_embedder = FramePosEmbedder(hidden_size)
 
+        # 3. Grid Attention
         if self.use_grid:
             self.grid_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
                 optimized_bitlinear=optimized_bitlinear, full_precision=full_precision, **kwargs
             )
 
+        # 4. Resampling Attention
         if self.use_resampling:
             self.resampling_attn = HGRNBitAttention(
                 hidden_size=hidden_size, num_heads=num_heads, 
@@ -249,12 +295,13 @@ class DecoupledVideoAttention(nn.Module):
     def forward(self, x, num_frames: int, mask: Optional[torch.Tensor] = None):
         B, L, D = x.shape
         T = num_frames
-        
         HW = L // T
+        
         if L % T != 0:
              out_spatial, _, _ = self.spatial_attn(x)
              return out_spatial
 
+        # --- 1. Base Pass (Spatial or Global) ---
         if self.use_temporal:
             x_spatial = rearrange(x, 'b (t hw) d -> (b t) hw d', t=T, hw=HW)
             out_spatial, _, _ = self.spatial_attn(x_spatial)
@@ -262,6 +309,7 @@ class DecoupledVideoAttention(nn.Module):
         else:
             out_spatial, _, _ = self.spatial_attn(x)
 
+        # --- 2. Temporal Pass (Decoupled) ---
         out_temporal = 0
         if self.use_temporal:
             x_temporal = rearrange(x, 'b (t hw) d -> (b hw) t d', t=T, hw=HW)
@@ -271,6 +319,7 @@ class DecoupledVideoAttention(nn.Module):
             t_out, _, _ = self.temporal_attn(x_temporal)
             out_temporal = rearrange(t_out, '(b hw) t d -> b (t hw) d', hw=HW)
 
+        # --- 3. Grid Pass ---
         out_grid = 0
         if self.use_grid and self.use_temporal:
             H = int(math.sqrt(HW))
@@ -287,6 +336,7 @@ class DecoupledVideoAttention(nn.Module):
 
         final_out = out_spatial + out_temporal + out_grid
 
+        # --- 4. Resampling ---
         if self.use_resampling:
             if mask is not None:
                 res_in = x * mask
@@ -435,10 +485,6 @@ class DualStreamBlock(nn.Module):
         return x, c
 
 class SingleStreamBlock(nn.Module):
-    """
-    Single stream block. Uses standard attention for simplicity in deep layers.
-    FIXED: Uses timestep 't' for modulation, not text 'c'.
-    """
     def __init__(self, hidden_size: int, num_heads: int, mlp_ratio: float = 4.0, use_rope: bool = False, use_ternary_rope: bool = False, optimized_bitlinear: bool = True, full_precision: bool = False):
         super().__init__()
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -448,17 +494,11 @@ class SingleStreamBlock(nn.Module):
         self.adaLN_modulation = FullPrecisionAdaLNConditioning(hidden_size, hidden_size, 6 * hidden_size, eps=1e-6, hidden_ratio=mlp_ratio)
 
     def forward(self, x, t):
-        # x: Combined tokens (Video + Text)
-        # t: Timestep Embedding
         modulated_t = ACT2FN['silu'](t)
-        
-        # This now chunks the feature dimension [B, 6*D] -> 6 tensors of [B, D]
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(modulated_t).chunk(6, dim=1)
-        
         modulated_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_output, _, _ = self.attn(modulated_x)
         x = x + gate_msa.unsqueeze(1) * attn_output
-        
         mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
         mlp_output = self.mlp(mlp_input)
         x = x + gate_mlp.unsqueeze(1) * mlp_output
@@ -480,10 +520,15 @@ class FinalLayer(nn.Module):
 
 
 # -----------------------------------------------------------------------------
-# Main VideoDiT Class
+# Main VideoDiT Class (Unified)
 # -----------------------------------------------------------------------------
 
 class VideoDiT(nn.Module):
+    """
+    Unified Video Generation Transformer.
+    Supports architectures: 'flow' (Flow Matching) and 'diffusion' (Standard Diffusion).
+    Supports features: Decoupled Spatial/Temporal/Grid Attention.
+    """
     def __init__(
         self,
         input_size: Tuple[int, int, int] = (16, 64, 64),
@@ -501,13 +546,17 @@ class VideoDiT(nn.Module):
         first_frame_condition: bool = False, 
         optimized_bitlinear: bool = True,
         full_precision: bool = False,
+        # --- Advanced Attn Args ---
         use_temporal: bool = False,
         use_grid: bool = False,
         use_resampling: bool = False,
+        # --- Architecture Mode ---
+        architecture: Literal['flow', 'diffusion'] = 'flow', 
     ):
         super().__init__()
+        self.architecture = architecture
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2
+        self.out_channels = in_channels * 2 if architecture == 'diffusion' else in_channels
         self.input_size = input_size 
         self.patch_size = patch_size
         self.first_frame_condition = first_frame_condition
@@ -520,17 +569,24 @@ class VideoDiT(nn.Module):
         self.h_patches = input_size[1] // patch_size[1]
         self.w_patches = input_size[2] // patch_size[2]
         self.num_patches = self.t_patches * self.h_patches * self.w_patches
-        self.patch_dim = (patch_size[0] * patch_size[1] * patch_size[2]) * self.out_channels
+        self.patch_dim = (patch_size[0] * patch_size[1] * patch_size[2]) * in_channels
+        # Note: final projection out_channels handles the variance prediction for diffusion if needed
 
         self.x_embedder = VideoPatchEmbedder(in_channels, hidden_size, patch_size, optimized_bitlinear, full_precision)
-        self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         
+        # --- Architecture Switch: Timestep Embedding ---
+        if self.architecture == 'diffusion':
+            self.t_embedder = DiffusionTimestepEmbedder(hidden_size)
+        else:
+            self.t_embedder = FlowTimestepEmbedder(hidden_size)
+            
+        self.y_embedder = TextEmbedder(vocab_size, hidden_size, dropout_prob)
         if first_frame_condition:
             self.img_embedder = ImageConditionEmbedder(in_channels, hidden_size, patch_size[1], dropout_prob)
 
-        logger.info(f"Initialized VideoDiT (Diffusion) with {self.num_patches} tokens.")
-        
+        logger.info(f"Initialized VideoDiT in '{self.architecture}' mode.")
+        logger.info(f"Features: Temporal={use_temporal}, Grid={use_grid}, Resample={use_resampling}")
+
         self.dual_stream_blocks = nn.ModuleList([
             DualStreamBlock(
                 hidden_size, num_heads, mlp_ratio, use_rope, use_ternary_rope, 
@@ -546,7 +602,10 @@ class VideoDiT(nn.Module):
             for _ in range(num_single_stream_blocks)
         ])
 
-        self.final_layer = FinalLayer(hidden_size, self.patch_dim, mlp_ratio, optimized_bitlinear, full_precision)
+        # Output dim differs: Flow predicts velocity (same channels), Diffusion often predicts noise (same channels) or noise+var
+        final_out_dim = self.patch_dim if self.architecture == 'flow' else self.patch_dim # Can be 2*patch_dim for learned variance
+        self.final_layer = FinalLayer(hidden_size, final_out_dim, mlp_ratio, optimized_bitlinear, full_precision)
+        
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -558,13 +617,15 @@ class VideoDiT(nn.Module):
         self.apply(_basic_init)
         nn.init.normal_(self.y_embedder.embedding.weight, std=0.02)
         
+        # Initialization strategy:
+        # For Flow Matching, zero-init final projections mimics identity map (x_t -> x_t).
+        # For Diffusion, this is also often beneficial for stability.
         for block in self.dual_stream_blocks:
             nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
             nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
         for block in self.single_stream_blocks:
             nn.init.constant_(block.adaLN_modulation.output_proj.weight, 0)
             nn.init.constant_(block.adaLN_modulation.output_proj.bias, 0)
-            
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.weight, 0)
         nn.init.constant_(self.final_layer.adaLN_modulation.output_proj.bias, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
@@ -572,12 +633,9 @@ class VideoDiT(nn.Module):
 
     def unpatchify(self, x):
         b, l, d = x.shape
-        c_out = self.out_channels
+        c_out = self.in_channels # Assuming output channels = input channels
         pt, ph, pw = self.patch_size
         nt, nh, nw = self.t_patches, self.h_patches, self.w_patches
-        
-        assert l == nt * nh * nw, "Token count mismatch during unpatchify"
-
         x = x.reshape(b, nt, nh, nw, pt, ph, pw, c_out)
         x = torch.einsum('bthwzyxc->bctzhwyx', x)
         x = x.reshape(b, c_out, nt * pt, nh * ph, nw * pw)
@@ -600,21 +658,23 @@ class VideoDiT(nn.Module):
             x_tokens, y_tokens = block(x_tokens, y_tokens, t_emb, num_frames=self.t_patches)
 
         combined_tokens = torch.cat([x_tokens, y_tokens], dim=1)
-        
-        # FIXED: Pass t_emb to SingleStreamBlock
         for block in self.single_stream_blocks:
-            combined_tokens = block(combined_tokens, t_emb) 
+            combined_tokens = block(combined_tokens, t_emb)
 
         processed_x_tokens = combined_tokens[:, :num_x_tokens]
         output = self.final_layer(processed_x_tokens, t_emb)
-        
         return self.unpatchify(output)
 
     def forward_with_cfg(self, x, t, y, cfg_scale_text, first_frame=None, cfg_scale_img=1.0):
+        """
+        Supports CFG for both Flow and Diffusion.
+        Ensure 't' shape matches 'x' batch dimension before calling.
+        """
         half = x.shape[0] // 2
         x_tokens = self.x_embedder(x)
         x_tokens = torch.cat([x_tokens[:half]] * 4, dim=0) if self.first_frame_condition else torch.cat([x_tokens[:half]] * 2, dim=0)
         
+        # Handle t expansion
         t_in = torch.cat([t[:half]] * 4, dim=0) if self.first_frame_condition else torch.cat([t[:half]] * 2, dim=0)
         t_emb = self.t_embedder(t_in)
 
@@ -624,7 +684,6 @@ class VideoDiT(nn.Module):
         if self.first_frame_condition:
             text_drop_mask = torch.tensor([1, 0, 1, 0], device=x.device).repeat_interleave(half)
             y_emb = self.y_embedder(y_ids.repeat(4, 1), y_mask.repeat(4, 1), force_drop_ids=text_drop_mask)
-            
             img_in = first_frame[:half]
             img_drop_mask = torch.tensor([1, 1, 0, 0], device=x.device).repeat_interleave(half)
             img_tokens = self.img_embedder(img_in.repeat(4, 1, 1, 1), force_drop_mask=img_drop_mask)
@@ -646,17 +705,67 @@ class VideoDiT(nn.Module):
         model_out = self.unpatchify(model_out)
 
         if self.first_frame_condition:
-            e_uncond, e_text, e_img, e_both = torch.chunk(model_out, 4, dim=0)
-            noise_pred = e_uncond + cfg_scale_text * (e_text - e_uncond) + cfg_scale_img * (e_img - e_uncond)
+            pred_uncond, pred_text, pred_img, _ = torch.chunk(model_out, 4, dim=0)
+            final_pred = pred_uncond + cfg_scale_text * (pred_text - pred_uncond) + cfg_scale_img * (pred_img - pred_uncond)
         else:
-            e_uncond, e_text = torch.chunk(model_out, 2, dim=0)
-            noise_pred = e_uncond + cfg_scale_text * (e_text - e_uncond)
+            pred_uncond, pred_text = torch.chunk(model_out, 2, dim=0)
+            final_pred = pred_uncond + cfg_scale_text * (pred_text - pred_uncond)
 
-        return noise_pred
+        return final_pred
+
+    @torch.no_grad()
+    def sample_flow(self, z, y, steps=50, cfg_scale=7.0, first_frame=None):
+        """Euler integration for Flow Matching"""
+        assert self.architecture == 'flow'
+        b = z.shape[0]
+        dt = 1.0 / steps
+        current_x = z
+        for i in range(steps):
+            t_curr = i / steps
+            t_tensor = torch.full((b * 2,), t_curr, device=z.device, dtype=torch.float32)
+            z_in = torch.cat([current_x, current_x], dim=0)
+            y_in = {k: torch.cat([v, v], dim=0) for k, v in y.items()}
+            img_in = torch.cat([first_frame, first_frame], dim=0) if first_frame is not None else None
+            v_pred = self.forward_with_cfg(z_in, t_tensor, y_in, cfg_scale, first_frame=img_in)
+            current_x = current_x + v_pred * dt
+        return current_x
 
 # -----------------------------------------------------------------------------
-# Configs
+# Loss Functions & Configs
 # -----------------------------------------------------------------------------
+
+def flow_matching_loss(model, x_1, y, first_frame=None):
+    """Loss for Continuous Flow Matching."""
+    b, c, t, h, w = x_1.shape
+    device = x_1.device
+    x_0 = torch.randn_like(x_1)
+    t_step = torch.rand(b, device=device)
+    t_expand = t_step.view(b, 1, 1, 1, 1)
+    x_t = t_expand * x_1 + (1 - t_expand) * x_0
+    v_target = x_1 - x_0
+    v_pred = model(x_t, t_step, y, first_frame=first_frame)
+    loss = F.mse_loss(v_pred, v_target)
+    return loss
+
+def diffusion_loss(model, x_0, y, first_frame=None, noise=None):
+    """Standard DDPM-style Loss for Diffusion."""
+    b, c, t, h, w = x_0.shape
+    device = x_0.device
+    if noise is None:
+        noise = torch.randn_like(x_0)
+    
+    # Sample discrete timesteps
+    t_step = torch.randint(0, 1000, (b,), device=device).long()
+    
+    # Simple linear noise schedule for demonstration (Replace with Alphas/Sigmas)
+    # This is a placeholder for standard scheduler logic (e.g., Diffusers DDPMScheduler)
+    alpha = 1 - (t_step.float() / 1000.0).view(b, 1, 1, 1, 1)
+    x_t = alpha * x_0 + (1 - alpha) * noise
+    
+    # Model predicts noise
+    noise_pred = model(x_t, t_step, y, first_frame=first_frame)
+    loss = F.mse_loss(noise_pred, noise)
+    return loss
 
 def VideoDiT_XL(**kwargs):
     return VideoDiT(depth=28, hidden_size=1152, num_heads=16, num_dual_stream_blocks=14, **kwargs)

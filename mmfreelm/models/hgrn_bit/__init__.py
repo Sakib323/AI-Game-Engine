@@ -8,6 +8,7 @@ from mmfreelm.models.hgrn_bit.rotary_embedding import RotaryEmbedding, apply_rot
 from mmfreelm.models.hgrn_bit.ternary_dit import TimestepEmbedder, DiTBlock, TextEmbedder, FinalLayer, DiT_models
 from mmfreelm.models.hgrn_bit.mesh_dit import MeshDiT_models
 from mmfreelm.models.hgrn_bit.texture_dit import TernaryMVAdapter_models
+from mmfreelm.models.hgrn_bit.video_gen import VideoDiT_models, flow_matching_loss
 
 
 AutoConfig.register(HGRNBitConfig.model_type, HGRNBitConfig)
@@ -28,5 +29,7 @@ __all__ = [
     'FinalLayerSecond',
     'DiT_models',
     'MeshDiT_models',
-    'TernaryMVAdapter_models'
+    'TernaryMVAdapter_models',
+    'VideoDiT_models',
+    'flow_matching_loss',
 ]
