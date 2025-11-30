@@ -159,6 +159,10 @@ class TextEmbedder(nn.Module):
 
     def forward(self, input_ids, attention_mask, train=True, force_drop_ids=None):
         use_dropout = self.dropout_prob > 0
+        
+        if train and use_dropout and torch.rand(1).item() < 0.01: 
+            print(f"DEBUG: Conditioning Dropout is ACTIVE. Prob: {self.dropout_prob}")
+            
         if (train and use_dropout) or (force_drop_ids is not None):
             input_ids = self.token_drop(input_ids, force_drop_ids)
 
