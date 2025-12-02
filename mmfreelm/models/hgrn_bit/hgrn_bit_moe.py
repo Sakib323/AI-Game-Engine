@@ -13,8 +13,9 @@ class HGRNBitMoE(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
-        self.expert_capacity = int(config.moe_intermediate_size * 1.5)  # Buffer capacity
-
+        
+        # Dynamic capacity factor (1.25x buffer is standard)
+        self.capacity_factor = 1.25 
 
         from mmfreelm.models.hgrn_bit.modeling_hgrn_bit import HGRNBitMLP
 
@@ -26,18 +27,16 @@ class HGRNBitMoE(nn.Module):
             ) for _ in range(config.num_experts)
         ])
         
-        # Router using BitLinear for ternary quantization
+        # Router using Standard Linear for precision (BitLinear breaks routing convergence)
         self.gate_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
         
-
         self.shared_expert = HGRNBitMLP(
             hidden_size=config.hidden_size,
-            intermediate_size=config.moe_intermediate_size, # Reuse MoE size or config.intermediate_size
+            intermediate_size=config.moe_intermediate_size, 
             hidden_act=config.hidden_act
         )
-        # Learnable gate for the shared expert (allows model to scale its contribution)
-        self.shared_expert_gate = nn.Linear(config.hidden_size, 1, bias=False)
+        # REMOVED: Shared Expert Gate (DeepSeek-V2 style: Direct addition is more stable)
 
         # ------------------------------------------------------------------
         # 3. Load Balancing
@@ -49,26 +48,24 @@ class HGRNBitMoE(nn.Module):
         batch_size, seq_len, _ = x.size()
         x_flat = x.view(-1, self.hidden_size)
         
-
+        # Independent Shared Expert (DeepSeek-V2/V3 Style: Direct Add)
         shared_output = self.shared_expert(x_flat)
-        # Calculate gating score for shared expert (Sigmoid to keep it 0-1 range)
-        shared_gate_score = self.shared_expert_gate(x_flat).sigmoid()
-        # Apply gate
-        shared_output = shared_output * shared_gate_score
-
 
         x_norm = self.gate_norm(x_flat)
         gate_logits = self.gate(x_norm)
         
+        # Router Z-Loss (Stability Fix)
+        # Prevent logits from exploding using LogSumExp
+        z_loss = torch.logsumexp(gate_logits, dim=-1).square().mean() * 1e-4
+
         # Gating with top-k expert selection
-        top_k_weights, top_k_indices = torch.topk(
-            gate_logits.softmax(dim=-1), 
-            self.top_k, 
-            dim=-1
-        )
+        router_probs = gate_logits.softmax(dim=-1)
+        top_k_weights, top_k_indices = torch.topk(router_probs, self.top_k, dim=-1)
         
-        # Expert capacity calculation
-        capacity = min(self.expert_capacity, batch_size * seq_len // self.num_experts)
+        # Dynamic Expert Capacity Calculation (Token-based)
+        tokens_per_expert = (batch_size * seq_len) / self.num_experts
+        capacity = int(tokens_per_expert * self.capacity_factor)
+
         # Create a mask for mapping tokens to experts
         expert_mask = torch.zeros_like(gate_logits).scatter_(
             1, top_k_indices, top_k_weights
@@ -76,7 +73,10 @@ class HGRNBitMoE(nn.Module):
         
         # Routed output container
         routed_outputs = torch.zeros_like(x_flat)
-        aux_loss = 0.0
+        
+        # Fix CPU Sync: Update counts using detach() to avoid blocking GPU
+        with torch.no_grad():
+            self.expert_counts += expert_mask.sum(dim=0).detach()
         
         for expert_idx in range(self.num_experts):
             # Get tokens assigned to this expert
@@ -88,7 +88,7 @@ class HGRNBitMoE(nn.Module):
             masked_indices = torch.where(mask)[0]
             if len(masked_indices) > capacity:
                 selected_indices = masked_indices[:capacity]
-                mask[masked_indices[capacity:]] = False
+                # mask[masked_indices[capacity:]] = False # Optional: Update mask for loss
             else:
                 selected_indices = masked_indices
                 
@@ -96,7 +96,6 @@ class HGRNBitMoE(nn.Module):
             expert_input = x_flat[selected_indices]
             expert_output = self.experts[expert_idx](expert_input)
             
-
             relevant_weights = torch.gather(
                 top_k_weights[selected_indices], 
                 1, 
@@ -105,10 +104,15 @@ class HGRNBitMoE(nn.Module):
             
             routed_outputs[selected_indices] += relevant_weights.unsqueeze(-1) * expert_output
             
-            self.expert_counts[expert_idx] += mask.sum().item()
-            aux_loss += mask.float().mean() * expert_idx  # Simple load balancing
+        # Switch Transformer Loss (Correct Formula)
+        # density = fraction of tokens in batch assigned to expert
+        density = expert_mask.float().mean(dim=0)
+        # probs = average probability assigned to expert
+        probs = router_probs.mean(dim=0)
+        # Switch Loss = dot(density, probs) * N
+        switch_loss = (density * probs).sum() * self.num_experts
             
-        self.aux_loss = aux_loss / self.num_experts
+        self.aux_loss = switch_loss + z_loss
 
         final_output = routed_outputs + shared_output
         
