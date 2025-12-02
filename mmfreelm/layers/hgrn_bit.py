@@ -70,7 +70,8 @@ class HGRNBitAttention(nn.Module):
         if use_short_conv:
             self.conv_size = conv_size
             if share_conv_kernel:
-                self.h_conv1d = ShortConvolution(hidden_size, conv_size, activation='silu')
+                # FIXED: Pass conv_bias instead of undefined 'bias'
+                self.h_conv1d = ShortConvolution(hidden_size, conv_size, bias=conv_bias, activation='silu')
             else:
                 self.q_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
                 self.f_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
@@ -134,6 +135,10 @@ class HGRNBitAttention(nn.Module):
         if lower_bound is not None and self.layer_idx > 0:
             f = lower_bound + (1 - lower_bound) * f
         i = swiglu(i, 1 - f)
+        
+        # Calculate G early so we can rotate it if needed
+        g = self.g_proj(hidden_states)
+
         # dealing with left-padding
         if attention_mask is not None:
             i = i.mul_(attention_mask.unsqueeze(-1))
@@ -141,11 +146,13 @@ class HGRNBitAttention(nn.Module):
         # Reshape for rotary embeddings
         i = rearrange(i, 'b l (h d) -> b h l d', h=self.num_heads)
         f = rearrange(f, 'b l (h d) -> b h l d', h=self.num_heads)
+        g = rearrange(g, 'b l (h d) -> b h l d', h=self.num_heads)
         
         if self.rotary_embeddings:
             seq_len = i.shape[2]
             cos, sin = self.rotary_emb(i, seq_len=seq_len)
-            i, f = apply_rotary_pos_emb(i, f, cos, sin)
+            # Correct RoPE: Rotate Content (i) and Query/Gate (g), NOT Decay (f)
+            i, g = apply_rotary_pos_emb(i, g, cos, sin)
 
         recurrent_state = last_state[-1] if use_cache else None
         if mode == 'fused_recurrent':
@@ -164,7 +171,10 @@ class HGRNBitAttention(nn.Module):
             past_key_values.update(last_state, self.layer_idx, i.shape[2])
 
         o = rearrange(o, 'b h l d -> b l (h d)')
-        o = self.g_norm(self.g_proj(hidden_states), o)
+        g = rearrange(g, 'b h l d -> b l (h d)') # Restore G shape
+        
+        # Use G (potentially rotated) for the fused gate norm
+        o = self.g_norm(g, o)
         o = self.o_proj(o)
 
         return o, None, past_key_values

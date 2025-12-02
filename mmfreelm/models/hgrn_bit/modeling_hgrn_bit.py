@@ -64,7 +64,7 @@ class HGRNBitBlock(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.attn_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.rms_norm_eps)
+        # Removed attn_norm (Redundant, BitLinear handles norm)
         self.attn = HGRNBitAttention(
             mode=config.attn_mode,
             hidden_size=config.hidden_size,
@@ -78,11 +78,10 @@ class HGRNBitBlock(nn.Module):
             rotary_embeddings=config.rotary_embeddings,
             rope_theta=config.rope_theta,
             use_ternary_rope=config.use_ternary_rope,
-            optimized_bitlinear = False,
+            optimized_bitlinear = True, # ENABLED
             full_precision = False,
         )
-        self.mlp_norm = RMSNorm(hidden_size=config.hidden_size, eps=config.rms_norm_eps)
-
+        # Removed mlp_norm (Redundant, BitLinear handles norm)
 
         # Modified MLP initialization
         if config.moe:
@@ -107,7 +106,7 @@ class HGRNBitBlock(nn.Module):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
-        hidden_states = self.attn_norm(hidden_states)
+        # Removed explicit attn_norm call
         hidden_states, attentions, past_key_values = self.attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -116,8 +115,15 @@ class HGRNBitBlock(nn.Module):
             output_attentions=output_attentions,
             lower_bound=lower_bound
         )
-        hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
-        hidden_states = self.mlp(hidden_states)
+        # Removed explicit mlp_norm call
+        
+        # Accumulate Residual for MLP
+        residual = residual + hidden_states
+        
+        # MLP forward
+        hidden_states = self.mlp(residual)
+        
+        # Final Residual
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states, attentions, past_key_values)
@@ -140,6 +146,10 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
         rescale_prenorm_residual: bool = True,
         num_residuals_per_layer: int = 2,
     ):
+        # Prevent overwriting specialized HGRN initialization
+        if getattr(module, "_is_hf_initialized", False):
+            return
+
         if isinstance(module, (nn.Linear, nn.Conv1d, BitLinear)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -243,6 +253,9 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         if self.config.use_lower_bound:
             lower_bounds = self.lower_bounds.softmax(0)
             lower_bounds = lower_bounds.cumsum(0) - lower_bounds[0]
+            
+        total_aux_loss = 0.0 # Accumulate MoE aux loss
+        
         for i, layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -271,6 +284,10 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
             if output_attentions:
                 all_attns += (attentions,)
 
+            # Collect Aux Loss
+            if hasattr(layer, 'mlp') and hasattr(layer.mlp, 'aux_loss'):
+                total_aux_loss += layer.mlp.aux_loss
+
         hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -280,14 +297,19 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         next_cache = None
         if use_cache:
             next_cache = past_key_values.to_legacy_cache()
+            
+        # Return Aux loss in output
         if not return_dict:
-            return tuple(x for x in [hidden_states, next_cache, all_hidden_states, all_attns] if x is not None)
-        return BaseModelOutputWithPast(
+            return tuple(x for x in [hidden_states, next_cache, all_hidden_states, all_attns, total_aux_loss] if x is not None)
+            
+        output = BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_attns
         )
+        output.aux_loss = total_aux_loss
+        return output
 
 
 class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
@@ -407,6 +429,10 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
             labels = labels.to(logits.device)
             labels = torch.cat((labels[..., 1:], torch.full_like(labels[:, :1], loss_fct.ignore_index)), 1)
             loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+            
+            # Add MoE Aux Loss to total loss
+            if hasattr(outputs, 'aux_loss'):
+                loss += 0.02 * outputs.aux_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]
