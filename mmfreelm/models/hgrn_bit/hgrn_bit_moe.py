@@ -28,7 +28,7 @@ class HGRNBitMoE(nn.Module):
         
         # Router using BitLinear for ternary quantization
         self.gate_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.gate = BitLinear(config.hidden_size, config.num_experts, bias=False)
+        self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
         
 
         self.shared_expert = HGRNBitMLP(
