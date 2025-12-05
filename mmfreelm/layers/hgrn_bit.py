@@ -70,7 +70,7 @@ class HGRNBitAttention(nn.Module):
         if use_short_conv:
             self.conv_size = conv_size
             if share_conv_kernel:
-                # FIXED: Pass conv_bias instead of undefined 'bias'
+                # Pass conv_bias instead of undefined 'bias'
                 self.h_conv1d = ShortConvolution(hidden_size, conv_size, bias=conv_bias, activation='silu')
             else:
                 self.q_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
@@ -118,14 +118,16 @@ class HGRNBitAttention(nn.Module):
             conv_state = last_state[0] if use_cache else None
             if self.share_conv_kernel:
                 # conv state is updated inplace
-                hidden_states = self.h_conv1d(hidden_states, attention_mask, conv_state)
+                # FIX: Removed 'attention_mask' argument
+                hidden_states = self.h_conv1d(hidden_states, cache=conv_state)
                 i = self.i_proj(hidden_states)
                 f = self.f_proj(hidden_states)
             else:
                 conv_state_i = last_state[2] if use_cache else None
                 conv_state_f = last_state[1] if use_cache else None
-                i = self.i_conv1d(self.i_proj(hidden_states), attention_mask, conv_state_i)
-                f = self.f_conv1d(self.f_proj(hidden_states), attention_mask, conv_state_f)
+                # FIX: Removed 'attention_mask' argument
+                i = self.i_conv1d(self.i_proj(hidden_states), cache=conv_state_i)
+                f = self.f_conv1d(self.f_proj(hidden_states), cache=conv_state_f)
         else:
             i = self.i_proj(hidden_states)
             f = self.f_proj(hidden_states)
