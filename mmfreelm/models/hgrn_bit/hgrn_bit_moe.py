@@ -67,7 +67,7 @@ class HGRNBitMoE(nn.Module):
         capacity = int(tokens_per_expert * self.capacity_factor)
 
         # Create a mask for mapping tokens to experts
-        expert_mask = torch.zeros_like(gate_logits).scatter_(
+        expert_mask = torch.zeros_like(gate_logits, dtype=top_k_weights.dtype).scatter_(
             1, top_k_indices, top_k_weights
         )
         

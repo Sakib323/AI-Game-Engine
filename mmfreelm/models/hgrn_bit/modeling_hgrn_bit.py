@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint
 from transformers.activations import ACT2FN
+from transformers import GenerationMixin
 from transformers.modeling_outputs import (BaseModelOutputWithPast,
                                            CausalLMOutputWithPast)
 from transformers.modeling_utils import PreTrainedModel
@@ -312,7 +313,7 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         return output
 
 
-class HGRNBitForCausalLM(HGRNBitPreTrainedModel):
+class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
