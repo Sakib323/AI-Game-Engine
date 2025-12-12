@@ -29,6 +29,7 @@ __all__ = [
     'FinalLayerSecond',
     'DiT_models',
     'MeshDiT_models',
+    'MeshDiT',
     'VideoDiT_models',
     'flow_matching_loss',
 ]
