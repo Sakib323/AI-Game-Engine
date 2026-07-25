@@ -561,7 +561,7 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
         self.post_init()
         self.tie_weights()
 
-    def tie_weights(self) -> None:
+    def tie_weights(self, recompute_mapping: bool = True) -> None:
         """
         Tie embedding and LM-head storage when configured to do so.
         """
