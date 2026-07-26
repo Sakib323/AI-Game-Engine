@@ -560,31 +560,31 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
         self.post_init()
         self.tie_weights()
 
-def tie_weights(
-    self,
-    missing_keys=None,
-    recompute_mapping: bool = True,
-    **kwargs,
-) -> None:
-    """
-    Restore the shared input-embedding / LM-head storage.
+    def tie_weights(
+        self,
+        missing_keys=None,
+        recompute_mapping: bool = True,
+        **kwargs,
+    ) -> None:
+        """
+        Restore the shared input-embedding / LM-head storage.
 
-    Transformers may pass missing_keys during from_pretrained. It is
-    expected that lm_head.embedding.weight is absent because it aliases
-    model.embeddings.weight and is reattached below.
-    """
-    del missing_keys, recompute_mapping, kwargs
+        Transformers may pass missing_keys during from_pretrained. It is
+        expected that lm_head.embedding.weight is absent because it aliases
+        model.embeddings.weight and is reattached below.
+        """
+        del missing_keys, recompute_mapping, kwargs
 
-    if not self.config.tie_word_embeddings:
-        return
+        if not self.config.tie_word_embeddings:
+            return
 
-    if not isinstance(self.lm_head, TiedLMHead):
-        self.lm_head = TiedLMHead(
-            self.model.embeddings,
-            bias=False,
-        )
-    else:
-        self.lm_head.embedding = self.model.embeddings
+        if not isinstance(self.lm_head, TiedLMHead):
+            self.lm_head = TiedLMHead(
+                self.model.embeddings,
+                bias=False,
+            )
+        else:
+            self.lm_head.embedding = self.model.embeddings
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.model.embeddings
