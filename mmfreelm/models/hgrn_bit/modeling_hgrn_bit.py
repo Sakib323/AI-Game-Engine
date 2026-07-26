@@ -530,8 +530,8 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
     HGRN-Bit causal language model.
     """
 
-    _tied_weights_keys = {"lm_head.weight": "model.embeddings.weight"}
-
+    #_tied_weights_keys = {"lm_head.weight": "model.embeddings.weight"}
+    _tied_weights_keys = ["lm_head.embedding.weight"]
     def __init__(
         self,
         config: HGRNBitConfig,
