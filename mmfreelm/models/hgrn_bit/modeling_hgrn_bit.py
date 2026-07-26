@@ -560,20 +560,31 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
         self.post_init()
         self.tie_weights()
 
-    def tie_weights(self, recompute_mapping: bool = True) -> None:
-        """
-        Tie embedding and LM-head storage when configured to do so.
-        """
-        if not self.config.tie_word_embeddings:
-            return
+def tie_weights(
+    self,
+    missing_keys=None,
+    recompute_mapping: bool = True,
+    **kwargs,
+) -> None:
+    """
+    Restore the shared input-embedding / LM-head storage.
 
-        if not isinstance(self.lm_head, TiedLMHead):
-            self.lm_head = TiedLMHead(
-                self.model.embeddings,
-                bias=False,
-            )
-        else:
-            self.lm_head.embedding = self.model.embeddings
+    Transformers may pass missing_keys during from_pretrained. It is
+    expected that lm_head.embedding.weight is absent because it aliases
+    model.embeddings.weight and is reattached below.
+    """
+    del missing_keys, recompute_mapping, kwargs
+
+    if not self.config.tie_word_embeddings:
+        return
+
+    if not isinstance(self.lm_head, TiedLMHead):
+        self.lm_head = TiedLMHead(
+            self.model.embeddings,
+            bias=False,
+        )
+    else:
+        self.lm_head.embedding = self.model.embeddings
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.model.embeddings
@@ -588,7 +599,20 @@ class HGRNBitForCausalLM(HGRNBitPreTrainedModel, GenerationMixin):
         return self.lm_head
 
     def set_output_embeddings(self, new_embeddings: nn.Module) -> None:
-        self.lm_head = new_embeddings
+        if self.config.tie_word_embeddings:
+            if isinstance(new_embeddings, TiedLMHead):
+                self.lm_head = new_embeddings
+            elif isinstance(new_embeddings, nn.Embedding):
+                self.model.embeddings = new_embeddings
+                self.lm_head = TiedLMHead(new_embeddings, bias=False)
+            else:
+                raise TypeError(
+                    "A model with tie_word_embeddings=True requires "
+                    "TiedLMHead or nn.Embedding as output embeddings."
+                )
+            self.tie_weights()
+        else:
+            self.lm_head = new_embeddings
 
     def set_decoder(self, decoder: HGRNBitModel) -> None:
         self.model = decoder
