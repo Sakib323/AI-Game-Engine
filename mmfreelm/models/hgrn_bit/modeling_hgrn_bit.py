@@ -172,6 +172,19 @@ class HGRNBitBlock(nn.Module):
             decay_mode=config.decay_mode,
             decay_init=config.decay_init,
         )
+
+        # Normalization lives inside BitLinear, which rescales its own input to
+        # RMS 1. Without these, a block's output magnitude is unrelated to the
+        # magnitude of the residual stream it writes into.
+        self.attn_norm = RMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+        )
+        self.mlp_norm = RMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+        )
+
         if self.is_moe_layer:
             from mmfreelm.models.hgrn_bit.hgrn_bit_moe import HGRNBitMoE
             self.mlp = HGRNBitMoE(config)
@@ -213,7 +226,7 @@ class HGRNBitBlock(nn.Module):
         residual = hidden_states
 
         hidden_states, attentions, past_key_values = self.attn(
-            hidden_states=hidden_states,
+            hidden_states=self.attn_norm(hidden_states),
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             use_cache=use_cache,
@@ -222,8 +235,7 @@ class HGRNBitBlock(nn.Module):
         )
 
         residual = residual + hidden_states
-        hidden_states = self.mlp(residual)
-        hidden_states = residual + hidden_states
+        hidden_states = residual + self.mlp(self.mlp_norm(residual))
 
         return hidden_states, attentions, past_key_values
 
@@ -245,7 +257,7 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
         if getattr(module, "_is_hf_initialized", False):
             return
 
-        if isinstance(module, (nn.Linear, nn.Conv1d, BitLinear)):
+        if isinstance(module, (nn.Linear, BitLinear)):
             nn.init.normal_(
                 module.weight,
                 mean=0.0,
@@ -255,6 +267,11 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
 
+            module._is_hf_initialized = True
+
+        elif isinstance(module, nn.Conv1d):
+            # ShortConvolution subclasses nn.Conv1d. std=0.02 on a depthwise
+            # k=4 kernel outputs ~0.04x its input; keep PyTorch's default init.
             module._is_hf_initialized = True
 
         elif isinstance(module, nn.Embedding):
@@ -270,7 +287,11 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
             module._is_hf_initialized = True
 
         if rescale_prenorm_residual:
-            for name, parameter in module.named_parameters(recurse=False):
+            # Recurse one level: with recurse=False, `name` is always "weight"
+            # and the rescale never fired. The match stays exact so it applies
+            # once, at the immediate parent (HGRNBitAttention / HGRNBitMLP),
+            # rather than again at every ancestor module.
+            for name, parameter in module.named_parameters():
                 if name in {"o_proj.weight", "down_proj.weight"}:
                     with torch.no_grad():
                         parameter.div_(
@@ -413,7 +434,9 @@ class HGRNBitModel(HGRNBitPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embeddings(input_ids)
 
-        hidden_states = inputs_embeds
+        # Lift the embedding to unit RMS so the first block writes into a
+        # stream of comparable magnitude instead of a 0.02-scale one.
+        hidden_states = inputs_embeds * math.sqrt(self.config.hidden_size)
 
         if self.gradient_checkpointing and self.training and use_cache:
             logger.warning_once(

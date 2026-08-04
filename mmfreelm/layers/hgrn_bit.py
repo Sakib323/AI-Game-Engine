@@ -190,15 +190,32 @@ class HGRNBitAttention(nn.Module):
         )
 
         if self.decay_mode == "independent":
-            initial_logit = math.log(decay_init / (1.0 - decay_init))
-            self.decay_logit = nn.Parameter(
-                torch.full(
-                    (self.num_heads, self.head_dim),
-                    initial_logit,
+            # Log-uniform half-lives across the head dimension. A single
+            # constant lower bound gives every channel the same short memory
+            # and provides no gradient signal towards longer timescales.
+            half_lives = torch.exp(
+                torch.linspace(
+                    math.log(8.0),
+                    math.log(2048.0),
+                    self.head_dim,
                 )
+            )
+            gates = torch.exp(math.log(0.5) / half_lives).clamp(
+                1e-4,
+                1.0 - 1e-4,
+            )
+            initial_logit = torch.log(gates / (1.0 - gates))
+            self.decay_logit = nn.Parameter(
+                initial_logit.unsqueeze(0)
+                .repeat(self.num_heads, 1)
+                .contiguous()
             )
         else:
             self.register_parameter("decay_logit", None)
+
+        # BitLinear is bias-free and RMSNorms its input, so the f_proj
+        # pre-activation is ~zero-mean and pins sigmoid near 0.5.
+        self.f_bias = nn.Parameter(torch.zeros(self.input_dim))
 
         self.rotary_embeddings = rotary_embeddings
         self.max_position_embeddings = max_position_embeddings
@@ -376,7 +393,7 @@ class HGRNBitAttention(nn.Module):
             f = self.f_proj(hidden_states)
 
         g = self.g_proj(hidden_states)
-        f = torch.sigmoid(f)
+        f = torch.sigmoid(f + self.f_bias)
         if attention_mask is not None:
             valid_tokens = attention_mask.to(dtype=i.dtype).unsqueeze(-1)
             # A padded token must neither write new content nor decay the prior state.
@@ -452,7 +469,9 @@ class HGRNBitAttention(nn.Module):
         o = rearrange(o, "b h l d -> b l (h d)")
         g = rearrange(g, "b h l d -> b l (h d)")
 
-        o = self.g_norm(g, o)
+        # FusedRMSNormSwishGate(x, o) = RMSNorm(x) * swish(o). The recurrent
+        # output is the content; the gate projection is the modulation.
+        o = self.g_norm(o, g)
         o = self.o_proj(o)
 
         return o, None, past_key_values
