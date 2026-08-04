@@ -286,20 +286,36 @@ class HGRNBitPreTrainedModel(PreTrainedModel):
 
             module._is_hf_initialized = True
 
-        if rescale_prenorm_residual:
-            # Recurse one level: with recurse=False, `name` is always "weight"
-            # and the rescale never fired. The match stays exact so it applies
-            # once, at the immediate parent (HGRNBitAttention / HGRNBitMLP),
-            # rather than again at every ancestor module.
-            for name, parameter in module.named_parameters():
-                if name in {"o_proj.weight", "down_proj.weight"}:
-                    with torch.no_grad():
-                        parameter.div_(
-                            math.sqrt(
-                                num_residuals_per_layer
-                                * self.config.num_hidden_layers
-                            )
-                        )
+        if rescale_prenorm_residual and isinstance(module, HGRNBitBlock):
+            # Match the block itself rather than walking parameter names. HF
+            # applies _init_weights to every submodule, so a recursive name
+            # match would divide the same tensor once per ancestor module. The
+            # original `recurse=False` walk had the opposite problem: `name`
+            # was always "weight", so the rescale never fired at all.
+            scale = math.sqrt(
+                num_residuals_per_layer
+                * self.config.num_hidden_layers
+            )
+
+            residual_projections = [module.attn.o_proj]
+
+            if hasattr(module.mlp, "down_proj"):
+                residual_projections.append(module.mlp.down_proj)
+            else:
+                # An MoE layer has no single down_proj; every expert writes
+                # into the residual stream.
+                residual_projections.extend(
+                    expert.down_proj for expert in module.mlp.experts
+                )
+
+                if getattr(module.mlp, "shared_expert", None) is not None:
+                    residual_projections.append(
+                        module.mlp.shared_expert.down_proj
+                    )
+
+            with torch.no_grad():
+                for projection in residual_projections:
+                    projection.weight.div_(scale)
 
     def set_quantization_enabled(self, enabled: bool) -> None:
         """
