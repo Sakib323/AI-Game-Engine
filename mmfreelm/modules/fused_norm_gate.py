@@ -512,11 +512,17 @@ def rms_norm_fn(x, o, weight, bias, residual=None, prenorm=False, residual_in_fp
 
 
 class FusedRMSNormSwishGate(torch.nn.Module):
-    def __init__(self, hidden_size, eps=1e-5):
+    def __init__(self, hidden_size, elementwise_affine=True, eps=1e-5):
         # factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.eps = eps
-        self.weight = torch.nn.Parameter(torch.empty(hidden_size))
+        self.elementwise_affine = elementwise_affine
+        if elementwise_affine:
+            self.weight = torch.nn.Parameter(torch.empty(hidden_size))
+        else:
+            # The Triton path indexes the weight unconditionally, so keep a
+            # fixed ones tensor rather than None when the affine is disabled.
+            self.register_buffer("weight", torch.empty(hidden_size))
         self.register_parameter("bias", None)
         self.reset_parameters()
 

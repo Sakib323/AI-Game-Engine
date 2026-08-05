@@ -92,11 +92,9 @@ class HGRN2BitAttention(nn.Module):
                 hidden_size, conv_size, activation="silu", bias=conv_bias,
             )
 
-        # This build's FusedRMSNormSwishGate is always affine and takes only
-        # (hidden_size, eps); elementwise_affine is accepted for API parity
-        # with the spec and has no non-default setting to forward.
-        self.elementwise_affine = elementwise_affine
-        self.g_norm = FusedRMSNormSwishGate(self.input_dim, eps=norm_eps)
+        self.g_norm = FusedRMSNormSwishGate(
+            self.input_dim, elementwise_affine=elementwise_affine, eps=norm_eps,
+        )
 
         if decay_mode == "independent":
             self.decay_logit = nn.Parameter(
@@ -194,12 +192,18 @@ class HGRN2BitAttention(nn.Module):
             o = (q[:, :, 0].float().unsqueeze(-2) @ recurrent_state).squeeze(-2)
             o = o.unsqueeze(2).to(hidden_states.dtype)
         elif self.use_triton_kernel:
+            # fla >= 0.5 takes q/k/v/g as [B, T, H, D] -- NOT [B, H, T, D].
+            # There is no head_first flag. Passing [B,H,T,D] runs without error
+            # and returns garbage (verified: relative error 1.03 vs 0.004 when
+            # transposed). The STATE stays [B, H, K, V].
+            to_fla = lambda t: t.transpose(1, 2).contiguous()
             o, recurrent_state = _chunk_gla_triton(
-                q, k, v, log_f,
+                to_fla(q), to_fla(k), to_fla(v), to_fla(log_f),
                 scale=1.0,
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
             )
+            o = o.transpose(1, 2)
         else:
             pad = (-seq_len) % self.chunk_size
             if pad:
