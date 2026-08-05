@@ -24,6 +24,8 @@ class HGRNBitConfig(PretrainedConfig):
         hidden_size: int = 2048,
         num_hidden_layers: int = 24,
         attn_mode: str = "fused_recurrent",
+        token_mixer: str = "hgrn",
+        gla_chunk_size: int = 64,
         num_heads: int = 1,
         expand_ratio: Union[int, float] = 1,
         use_short_conv: bool = True,
@@ -77,6 +79,8 @@ class HGRNBitConfig(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.attn_mode = attn_mode
+        self.token_mixer = token_mixer
+        self.gla_chunk_size = gla_chunk_size
         self.num_heads = num_heads
         self.expand_ratio = expand_ratio
 
@@ -206,6 +210,20 @@ class HGRNBitConfig(PretrainedConfig):
             raise ValueError(
                 "Only attn_mode='fused_recurrent' is currently supported."
             )
+
+        if self.token_mixer not in {"hgrn", "hgrn2"}:
+            raise ValueError("token_mixer must be 'hgrn' or 'hgrn2'.")
+
+        if self.gla_chunk_size <= 0:
+            raise ValueError("gla_chunk_size must be positive.")
+
+        if self.token_mixer == "hgrn2":
+            input_dim = int(self.hidden_size * self.expand_ratio)
+            head_dim = input_dim // self.num_heads
+            if head_dim < 32:
+                raise ValueError(
+                    f"hgrn2 needs head_dim >= 32 for a useful matrix state; got {head_dim}."
+                )
 
         if self.decay_mode not in {"independent", "global_lower_bound"}:
             raise ValueError(

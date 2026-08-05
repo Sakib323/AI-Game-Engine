@@ -147,31 +147,52 @@ class HGRNBitBlock(nn.Module):
         self.layer_idx = layer_idx
         self.is_moe_layer = config.is_moe_layer(layer_idx)
 
-        self.attn = HGRNBitAttention(
-            mode=config.attn_mode,
-            hidden_size=config.hidden_size,
-            num_heads=config.num_heads,
-            expand_ratio=config.expand_ratio,
-            use_short_conv=config.use_short_conv,
-            conv_size=config.conv_size,
-            conv_bias=config.conv_bias,
-            share_conv_kernel=config.share_conv_kernel,
-            layernorm_eps=config.rms_norm_eps,
-            layer_idx=layer_idx,
-            rotary_embeddings=config.rotary_embeddings,
-            rope_theta=config.rope_theta,
-            max_position_embeddings=config.max_position_embeddings,
-            use_ternary_rope=config.use_ternary_rope,
-            optimized_bitlinear=True,
-            full_precision=False,
-            weight_group_size=config.weight_quant_group_size,
-            weight_scale_method=config.weight_quant_scale,
-            activation_bits=config.activation_quant_bits,
-            activation_group_size=config.activation_quant_group_size,
-            quantization_enabled=config.quantization_warmup_steps == 0,
-            decay_mode=config.decay_mode,
-            decay_init=config.decay_init,
-        )
+        if config.token_mixer == "hgrn2":
+            from mmfreelm.layers.hgrn2_bit import HGRN2BitAttention
+
+            self.attn = HGRN2BitAttention(
+                hidden_size=config.hidden_size,
+                num_heads=config.num_heads,
+                expand_ratio=config.expand_ratio,
+                use_short_conv=config.use_short_conv,
+                conv_size=config.conv_size,
+                conv_bias=config.conv_bias,
+                decay_mode=config.decay_mode,
+                norm_eps=config.rms_norm_eps,
+                chunk_size=config.gla_chunk_size,
+                layer_idx=layer_idx,
+                weight_group_size=config.weight_quant_group_size,
+                weight_scale_method=config.weight_quant_scale,
+                activation_bits=config.activation_quant_bits,
+                activation_group_size=config.activation_quant_group_size,
+                quantization_enabled=config.quantization_warmup_steps == 0,
+            )
+        else:
+            self.attn = HGRNBitAttention(
+                mode=config.attn_mode,
+                hidden_size=config.hidden_size,
+                num_heads=config.num_heads,
+                expand_ratio=config.expand_ratio,
+                use_short_conv=config.use_short_conv,
+                conv_size=config.conv_size,
+                conv_bias=config.conv_bias,
+                share_conv_kernel=config.share_conv_kernel,
+                layernorm_eps=config.rms_norm_eps,
+                layer_idx=layer_idx,
+                rotary_embeddings=config.rotary_embeddings,
+                rope_theta=config.rope_theta,
+                max_position_embeddings=config.max_position_embeddings,
+                use_ternary_rope=config.use_ternary_rope,
+                optimized_bitlinear=True,
+                full_precision=False,
+                weight_group_size=config.weight_quant_group_size,
+                weight_scale_method=config.weight_quant_scale,
+                activation_bits=config.activation_quant_bits,
+                activation_group_size=config.activation_quant_group_size,
+                quantization_enabled=config.quantization_warmup_steps == 0,
+                decay_mode=config.decay_mode,
+                decay_init=config.decay_init,
+            )
 
         # Normalization lives inside BitLinear, which rescales its own input to
         # RMS 1. Without these, a block's output magnitude is unrelated to the
